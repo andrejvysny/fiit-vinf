@@ -1,0 +1,101 @@
+# GitHub Crawler Configuration
+# Production-grade settings with strict compliance
+
+run_id: "2025-01-09T12-00Z"
+workspace: "./workspace"
+
+# User agent MUST include contact information
+user_agent: "ResearchCrawlerBotVINF/1.0 (+mailto:xvysnya@stuba.sk)"
+accept_language: "en"
+accept_encoding: "br, gzip"
+
+# Robots.txt configuration
+robots:
+  user_agent: "ResearchCrawlerBotVINF/1.0 (+mailto:xvysnya@stuba.sk)"
+  cache_ttl_sec: 86400  # 24 hours
+
+# URL scope - STRICT deny-by-default
+scope:
+  # Only github.com allowed (no subdomains)
+  allowed_hosts: ["github.com"]
+  
+  # Explicitly denied subdomains
+  denied_subdomains:
+    - "api.github.com"
+    - "raw.githubusercontent.com"
+    - "gist.github.com"
+    - "codeload.github.com"
+  
+  # Allowlist patterns (regex) - ONLY these are allowed
+  allow_patterns:
+    - "^https://github\\.com/topics(?:/[^/?#]+)?$"           # Topics pages
+    - "^https://github\\.com/trending$"                      # Trending (no params)
+    - "^https://github\\.com/[^/]+/[^/]+/?$"                # Repo root
+    - "^https://github\\.com/[^/]+/[^/]+/blob/[^?#]+$"      # Blob viewer
+    - "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/?\\d*$"  # Issues/PRs
+  
+  # Deny patterns - explicitly blocked (checked after allow)
+  deny_patterns:
+    - "/search"
+    - "/tree/"
+    - "/commits/"
+    - "/graphs/"
+    - "/compare/"
+    - "/archive/"
+    - "/blame/"
+    - "/raw/"
+    - "/network/"
+    - "/stargazers"
+    - "/watchers"
+    - "/contributors"
+    - "/tags"
+    - "/branches"
+    - "/tarball/"
+    - "/zipball/"
+    - "\\?q="       # Search queries
+    - "\\?tab="     # Tab parameters
+    - "\\?since="   # Time filters
+    - "\\?until="   # Time filters
+  
+  # Only HTML content for discovery
+  content_types: ["text/html"]
+
+# Rate limiting - start conservatively
+limits:
+  global_concurrency: 2        # Max concurrent requests
+  per_host_concurrency: 2      # Max per host (same as global for single domain)
+  req_per_sec: 1.0            # Target request rate
+  connect_timeout_ms: 4000    # 4 seconds
+  read_timeout_ms: 12000      # 12 seconds
+  total_timeout_ms: 20000     # 20 seconds total
+  max_retries: 3
+  backoff_base_ms: 500        # Start backoff
+  backoff_cap_ms: 8000        # Max backoff
+
+# Crawl depth and per-repository caps
+caps:
+  per_repo_max_pages: 30      # Max pages per repository
+  per_repo_max_issues: 10     # Max issues per repository
+  per_repo_max_prs: 10        # Max pull requests per repository
+  max_depth: 4                # Maximum crawl depth
+
+# Frontier configuration (paths relative to workspace)
+frontier:
+  db_name: "frontier.lmdb"
+  bloom_name: "seen.bloom"
+  bloom_capacity: 50000000    # 50M URLs
+  bloom_error_rate: 0.001     # 0.1% false positive rate
+
+# Discoveries output configuration
+spool:
+  rotate_every_mb: 100        # Rotate JSONL files at 100MB
+  backpressure_limit_gb: 10   # Pause if spool exceeds 10GB
+
+# Metrics configuration
+metrics:
+  filename: "crawler_metrics.csv"
+  flush_interval_sec: 10      # Flush metrics every 10 seconds
+
+# Trajectory (crawl graph) configuration
+trajectory:
+  filename: "edges.csv"

@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""
+vi-scrape - Combined helper CLI for the crawler+scraper project.
+
+This wrapper provides three simple commands:
+  - run       : Auto-configure (if needed) and start crawler + scraper
+  - configure : Create workspace directories and initial bookmark
+  - reset     : Remove all workspace data (spool, store, index, logs)
+
+The goal is to keep first-run simple: `./vi-scrape run` will prepare the
+workspace and start both processes.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+WORKSPACE = REPO_ROOT / "workspace"
+SPOOL_DIR = WORKSPACE / "spool" / "discoveries"
+STORE_DIR = WORKSPACE / "store" / "html"
+STATE_DIR = WORKSPACE / "state"
+LOGS_DIR = WORKSPACE / "logs"
+BOOKMARK = STATE_DIR / "spool_bookmark.json"
+
+# Preferred python: repo venv if present, otherwise current interpreter
+def _find_python_executable() -> str:
+    """Return path to Python executable to use for subprocesses.
+
+    Priority:
+      1. <repo>/venv/bin/python3 or python
+      2. sys.executable
+    """
+    venv_py = REPO_ROOT / "venv" / "bin" / "python3"
+    if venv_py.exists():
+        return str(venv_py)
+    venv_py_alt = REPO_ROOT / "venv" / "bin" / "python"
+    if venv_py_alt.exists():
+        return str(venv_py_alt)
+    return sys.executable
+
+PYTHON_EXE = _find_python_executable()
+
+
+def configure(args=None):
+    """Create workspace directories and initial bookmark if missing."""
+    SPOOL_DIR.mkdir(parents=True, exist_ok=True)
+    STORE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not BOOKMARK.exists():
+        BOOKMARK.write_text(json.dumps({"file": None, "offset": 0}))
+        print(f"Created bookmark: {BOOKMARK}")
+    else:
+        print(f"Bookmark already exists: {BOOKMARK}")
+
+    # Ensure default seeds file exists in repo root
+    seeds_file = REPO_ROOT / "seeds.txt"
+    if not seeds_file.exists():
+        default_seeds = """# GitHub Crawler Seeds
+# One URL per line, comments start with #
+https://github.com/python/cpython
+https://github.com/torvalds/linux
+https://github.com/tensorflow/tensorflow
+https://github.com/kubernetes/kubernetes
+https://github.com/facebook/react
+https://github.com/vuejs/vue
+https://github.com/golang/go
+https://github.com/rust-lang/rust
+https://github.com/microsoft/vscode
+https://github.com/nodejs/node
+"""
+        seeds_file.write_text(default_seeds)
+        print(f"Created default seeds file: {seeds_file}")
+    print(f"Workspace directories ensured under {WORKSPACE}")
+
+
+def reset(args=None):
+    """Remove spool, store, state and logs after confirmation."""
+    print("This will REMOVE ALL scraped data, spool files, index and logs.")
+    answer = input("Type 'yes' to confirm: ")
+    if answer.strip().lower() != "yes":
+        print("Aborted.")
+        return
+
+    # Remove files/directories safely
+    def rm_glob(path: Path, pattern: str = "*"):
+        p = path
+        if p.exists():
+            for child in p.glob(pattern):
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                    else:
+                        child.unlink()
+                except Exception as e:
+                    print(f"Failed to remove {child}: {e}")
+
+    rm_glob(SPOOL_DIR)
+    if BOOKMARK.exists():
+        try:
+            BOOKMARK.unlink()
+        except Exception:
+            pass
+
+    rm_glob(STORE_DIR)
+    # Remove LMDB directory contents
+    page_index_dir = STATE_DIR / "page_index.lmdb"
+    if page_index_dir.exists():
+        try:
+            shutil.rmtree(page_index_dir)
+        except Exception as e:
+            print(f"Failed to remove page_index.lmdb: {e}")
+
+    rm_glob(LOGS_DIR)
+
+    print("Workspace reset complete. Directories remain in place.")
+
+
+def _start_crawler_process(config_path: str, seeds_path: str):
+    """Start crawler as background subprocess and return Popen object."""
+    python = PYTHON_EXE
+    # The crawler CLI defines --config as a global argument (before the subcommand).
+    # Place --config before the 'run' subcommand to avoid argparse errors.
+    cmd = [python, "-m", "crawler", "--config", config_path, "run"]
+    if seeds_path:
+        cmd += ["--seeds", seeds_path]
+
+    print(f"Starting crawler: {' '.join(cmd)}")
+    p = subprocess.Popen(cmd)
+    return p
+
+
+def run(args=None):
+    """Auto-configure (if needed) and start crawler (bg) + scraper (fg).
+
+    The crawler runs in background; the scraper is started in foreground so
+    its logs are visible. On CTRL-C or exit, the crawler is terminated.
+    """
+    # Ensure workspace exists
+    configure()
+
+    config_path = args.config if args and args.config else str(REPO_ROOT / "config_run.yaml")
+    scraper_config = args.scraper_config if args and args.scraper_config else str(REPO_ROOT / "scraper_config.yaml")
+    seeds = args.seeds if args and args.seeds else str(REPO_ROOT / "seeds.txt")
+
+    # Start crawler (background)
+    crawler_proc = _start_crawler_process(config_path, seeds)
+
+    # Build scraper command
+    python = PYTHON_EXE
+    scraper_cmd = [python, "-m", "scraper", "run", "--config", scraper_config]
+
+    def _terminate_child(proc: subprocess.Popen):
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    try:
+        # Run scraper in foreground (block until it exits)
+        print(f"Running scraper: {' '.join(scraper_cmd)}")
+        rc = subprocess.call(scraper_cmd)
+        print(f"Scraper exited with code: {rc}")
+    except KeyboardInterrupt:
+        print("KeyboardInterrupt received — shutting down")
+    finally:
+        print("Stopping crawler...")
+        _terminate_child(crawler_proc)
+        try:
+            crawler_proc.wait(timeout=5)
+        except Exception:
+            try:
+                crawler_proc.kill()
+            except Exception:
+                pass
+
+
+def main(argv=None):
+    # ensure PYTHON_EXE is treated as module-global throughout this function
+    global PYTHON_EXE
+    parser = argparse.ArgumentParser(prog="vi-scrape",
+                                     description="Wrapper CLI: run / configure / reset")
+    sub = parser.add_subparsers(dest="cmd")
+
+    p_run = sub.add_parser("run", help="Start crawler and scraper (auto-configures workspace)")
+    p_run.add_argument("--config", help="Crawler config path (default: config_run.yaml)")
+    p_run.add_argument("--scraper-config", help="Scraper config path (default: scraper_config.yaml)")
+    p_run.add_argument("--seeds", help="Seeds file path (default: seeds.txt)")
+
+    sub.add_parser("configure", help="Create workspace directories and initial bookmark (idempotent)")
+    sub.add_parser("reset", help="Remove all workspace data (spool, store, logs, index) — interactive confirmation")
+
+    args = parser.parse_args(argv)
+
+    # Quick dependency check: prefer to run imports using PYTHON_EXE (venv if available)
+    def _python_has_module(python: str, module: str) -> bool:
+        try:
+            proc = subprocess.run([python, "-c", f"import {module}"], capture_output=True)
+            return proc.returncode == 0
+        except Exception:
+            return False
+
+    # If current interpreter has yaml, we're good; otherwise attempt venv python
+    try:
+        import yaml  # type: ignore
+        chosen_python = sys.executable
+    except Exception:
+        # try repo venv
+        if PYTHON_EXE != sys.executable and _python_has_module(PYTHON_EXE, "yaml"):
+            chosen_python = PYTHON_EXE
+            print(f"Note: using repository venv python at {PYTHON_EXE}")
+        else:
+            print("ERROR: PyYAML is not installed in the current interpreter or repo venv.")
+            print("Options:")
+            print("  1) Activate the venv: source venv/bin/activate")
+            print("  2) Install requirements into your Python: python -m pip install -r requirements.txt")
+            print("  3) If you have a venv at ./venv, ensure it has PyYAML installed")
+            sys.exit(1)
+
+    # Use chosen_python for subprocesses
+    PYTHON_EXE = chosen_python
+
+    if args.cmd == "run":
+        run(args)
+    elif args.cmd == "configure":
+        configure()
+    elif args.cmd == "reset":
+        reset()
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()

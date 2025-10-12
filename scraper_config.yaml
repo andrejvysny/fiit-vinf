@@ -1,0 +1,38 @@
+run_id: "2025-01-09T15-30Z"
+workspace: "./workspace"
+
+user_agent: "VI2025-Scraper/1.0 (+contact@example.com)"
+accept_language: "en"
+accept_encoding: "br, gzip"
+
+limits:
+  global_concurrency: 2
+  req_per_sec: 1.0
+  connect_timeout_ms: 4000
+  read_timeout_ms: 15000
+  total_timeout_ms: 25000
+  max_retries: 3
+  backoff_base_ms: 500
+  backoff_cap_ms: 8000
+
+spool:
+  dir: "spool/discoveries"
+  max_backlog_gb: 10
+
+store:
+  root: "store/html"
+  compress: false
+  permissions: 0o644
+
+pages_csv:
+  path: "logs/pages-{run_id}.csv"
+
+metrics:
+  csv_path: "logs/scraper_metrics-{run_id}.csv"
+  flush_interval_sec: 10
+
+index:
+  db_path: "state/page_index.lmdb"
+
+bookmark:
+  path: "state/spool_bookmark.json"

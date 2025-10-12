@@ -1,0 +1,15 @@
+# GitHub Crawler Seeds
+# One URL per line, comments start with #
+# Default seeds (topics and trending) are always included
+
+# Popular repositories (examples - replace with your targets)
+https://github.com/python/cpython
+https://github.com/torvalds/linux
+https://github.com/tensorflow/tensorflow
+https://github.com/kubernetes/kubernetes
+https://github.com/facebook/react
+https://github.com/vuejs/vue
+https://github.com/golang/go
+https://github.com/rust-lang/rust
+https://github.com/microsoft/vscode
+https://github.com/nodejs/node

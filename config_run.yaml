@@ -1,0 +1,81 @@
+run_id: "2025-01-09T12-00Z"
+workspace: "./workspace"
+
+# User agent MUST include contact information (include +https to satisfy validation)
+user_agent: "ResearchCrawlerBotVINF/1.0 (+https://example.com/contact)"
+accept_language: "en"
+accept_encoding: "br, gzip"
+
+robots:
+  user_agent: "ResearchCrawlerBotVINF/1.0 (+https://example.com/contact)"
+  cache_ttl_sec: 86400
+
+scope:
+  allowed_hosts: ["github.com"]
+  denied_subdomains:
+    - "api.github.com"
+    - "raw.githubusercontent.com"
+    - "gist.github.com"
+    - "codeload.github.com"
+  allow_patterns:
+    - "^https://github\\.com/topics(?:/[^/?#]+)?$"
+    - "^https://github\\.com/trending$"
+    - "^https://github\\.com/[^/]+/[^/]+/?$"
+    - "^https://github\\.com/[^/]+/[^/]+/blob/[^?#]+$"
+    - "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/?\\d*$"
+  deny_patterns:
+    - "/search"
+    - "/tree/"
+    - "/commits/"
+    - "/graphs/"
+    - "/compare/"
+    - "/archive/"
+    - "/blame/"
+    - "/raw/"
+    - "/network/"
+    - "/stargazers"
+    - "/watchers"
+    - "/contributors"
+    - "/tags"
+    - "/branches"
+    - "/tarball/"
+    - "/zipball/"
+    - "\\?q="
+    - "\\?tab="
+    - "\\?since="
+    - "\\?until="
+  content_types: ["text/html"]
+
+limits:
+  global_concurrency: 2
+  per_host_concurrency: 2
+  req_per_sec: 1.0
+  connect_timeout_ms: 4000
+  read_timeout_ms: 12000
+  total_timeout_ms: 20000
+  max_retries: 3
+  backoff_base_ms: 500
+  backoff_cap_ms: 8000
+
+caps:
+  per_repo_max_pages: 30
+  per_repo_max_issues: 10
+  per_repo_max_prs: 10
+  max_depth: 4
+
+frontier:
+  db_name: "frontier.lmdb"
+  bloom_name: "seen.bloom"
+  bloom_capacity: 50000000
+  bloom_error_rate: 0.001
+
+spool:
+  rotate_every_mb: 100
+  backpressure_limit_gb: 10
+
+metrics:
+  filename: "crawler_metrics.csv"
+  flush_interval_sec: 10
+
+trajectory:
+  filename: "edges.csv"

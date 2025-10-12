@@ -1,0 +1,1 @@
+# Control flag modules for Manager integration
