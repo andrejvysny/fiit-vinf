@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-vi-scrape-unified - CLI wrapper for the unified crawler.
+run - CLI wrapper for the unified crawler.
 
 This wrapper provides commands for the refactored single-fetch architecture:
   - run       : Start unified crawler (fetch + store in one operation)
@@ -23,6 +23,7 @@ STATE_DIR = WORKSPACE / "state"
 METADATA_DIR = WORKSPACE / "metadata"
 STORE_DIR = WORKSPACE / "store" / "html"
 LOGS_DIR = WORKSPACE / "logs"
+SEEDS_FILE = REPO_ROOT / "seeds.txt"
 
 
 def _find_python_executable() -> str:
@@ -39,6 +40,14 @@ def _find_python_executable() -> str:
 PYTHON_EXE = _find_python_executable()
 
 
+def _workspace_configured() -> bool:
+    """Return True when workspace scaffolding already exists."""
+    required_dirs = (STATE_DIR, METADATA_DIR, STORE_DIR, LOGS_DIR)
+    if not all(path.is_dir() for path in required_dirs):
+        return False
+    return SEEDS_FILE.exists()
+
+
 def configure(args=None):
     """Create workspace directories for unified crawler."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -47,18 +56,13 @@ def configure(args=None):
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
     # Ensure default seeds file exists
-    seeds_file = REPO_ROOT / "seeds.txt"
-    if not seeds_file.exists():
+    if not SEEDS_FILE.exists():
         default_seeds = """# GitHub Crawler Seeds
 # One URL per line, comments start with #
-https://github.com/python/cpython
-https://github.com/torvalds/linux
-https://github.com/tensorflow/tensorflow
-https://github.com/kubernetes/kubernetes
-https://github.com/facebook/react
+https://github.com/
 """
-        seeds_file.write_text(default_seeds)
-        print(f"Created default seeds file: {seeds_file}")
+        SEEDS_FILE.write_text(default_seeds)
+        print(f"Created default seeds file: {SEEDS_FILE}")
     
     print(f"Workspace directories configured under {WORKSPACE}")
     print(f"  - State: {STATE_DIR}")
@@ -104,14 +108,14 @@ def reset(args=None):
 
 def run(args):
     """Run unified crawler."""
-    # Ensure workspace configured
-    configure()
+    if not _workspace_configured():
+        configure()
     
-    config_path = args.config if args.config else str(REPO_ROOT / "config_unified.yaml")
-    seeds_path = args.seeds if args.seeds else str(REPO_ROOT / "seeds.txt")
+    config_path = args.config if args.config else str(REPO_ROOT / "config.yaml")
+    seeds_path = args.seeds if args.seeds else str(SEEDS_FILE)
     
     # Build command
-    cmd = [PYTHON_EXE, str(REPO_ROOT / "crawler_unified.py"), 
+    cmd = [PYTHON_EXE, str(REPO_ROOT / "main.py"), 
            "--config", config_path,
            "--seeds", seeds_path]
     
@@ -135,7 +139,7 @@ def main(argv=None):
     
     # Run command
     p_run = sub.add_parser("run", help="Start unified crawler")
-    p_run.add_argument("--config", help="Config path (default: config_unified.yaml)")
+    p_run.add_argument("--config", help="Config path (default: config.yaml)")
     p_run.add_argument("--seeds", help="Seeds file path (default: seeds.txt)")
     
     # Configure command

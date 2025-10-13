@@ -1,17 +1,17 @@
-# GitHub Crawler Configuration
-# Production-grade settings with strict compliance
+# Unified Crawler Configuration (Refactored)
+# Single crawler with integrated fetch+store (no separate scraper needed)
 
-run_id: "2025-01-09T12-00Z"
+run_id: "unified-2025-01-12"
 workspace: "./workspace"
 
 # User agent MUST include contact information
-user_agent: "ResearchCrawlerBotVINF/1.0 (+mailto:xvysnya@stuba.sk)"
+user_agent: "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
 accept_language: "en"
 accept_encoding: "br, gzip"
 
 # Robots.txt configuration
 robots:
-  user_agent: "ResearchCrawlerBotVINF/1.0 (+mailto:xvysnya@stuba.sk)"
+  user_agent: "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
   cache_ttl_sec: 86400  # 24 hours
 
 # URL scope - STRICT deny-by-default
@@ -31,11 +31,12 @@ scope:
     - "^https://github\\.com/topics(?:/[^/?#]+)?$"           # Topics pages
     - "^https://github\\.com/trending$"                      # Trending (no params)
     - "^https://github\\.com/[^/]+/[^/]+/?$"                # Repo root
-    - "^https://github\\.com/[^/]+/[^/]+/blob/[^?#]+$"      # Blob viewer
+   # - "^https://github\\.com/[^/]+/[^/]+/blob/[^?#]+$"      # Blob viewer
     - "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/?\\d*$"  # Issues/PRs
   
   # Deny patterns - explicitly blocked (checked after allow)
   deny_patterns:
+    - "/blob/"      # Blob viewer (large files)
     - "/search"
     - "/tree/"
     - "/commits/"
@@ -57,17 +58,17 @@ scope:
     - "\\?since="   # Time filters
     - "\\?until="   # Time filters
   
-  # Only HTML content for discovery
+  # Only HTML content
   content_types: ["text/html"]
 
-# Rate limiting - start conservatively
+# Rate limiting - conservative settings
 limits:
   global_concurrency: 2        # Max concurrent requests
-  per_host_concurrency: 2      # Max per host (same as global for single domain)
-  req_per_sec: 1.0            # Target request rate
+  per_host_concurrency: 2      # Max per host
+  req_per_sec: 1.0            # Target request rate (1 req/sec)
   connect_timeout_ms: 4000    # 4 seconds
-  read_timeout_ms: 12000      # 12 seconds
-  total_timeout_ms: 20000     # 20 seconds total
+  read_timeout_ms: 15000      # 15 seconds
+  total_timeout_ms: 25000     # 25 seconds total
   max_retries: 3
   backoff_base_ms: 500        # Start backoff
   backoff_cap_ms: 8000        # Max backoff
@@ -79,23 +80,27 @@ caps:
   per_repo_max_prs: 10        # Max pull requests per repository
   max_depth: 4                # Maximum crawl depth
 
-# Frontier configuration (paths relative to workspace)
-frontier:
-  db_name: "frontier.lmdb"
-  bloom_name: "seen.bloom"
-  bloom_capacity: 50000000    # 50M URLs
-  bloom_error_rate: 0.001     # 0.1% false positive rate
+# File-based storage paths (all relative to workspace)
+# NO LMDB - all file-based!
+storage:
+  # Frontier (URL queue)
+  frontier_file: "state/frontier.jsonl"
+  
+  # Dedup (fetched URLs tracking)
+  fetched_urls_file: "state/fetched_urls.txt"
+  
+  # Robots cache
+  robots_cache_file: "state/robots_cache.jsonl"
+  
+  # Unified metadata (crawl + scrape combined)
+  metadata_file: "metadata/crawl_metadata.jsonl"
+  
+  # HTML content-addressed store
+  html_store_root: "store/html"
+  html_compress: false
+  html_permissions: 0o644
 
-# Discoveries output configuration
-spool:
-  rotate_every_mb: 100        # Rotate JSONL files at 100MB
-  backpressure_limit_gb: 10   # Pause if spool exceeds 10GB
-
-# Metrics configuration
-metrics:
-  filename: "crawler_metrics.csv"
-  flush_interval_sec: 10      # Flush metrics every 10 seconds
-
-# Trajectory (crawl graph) configuration
-trajectory:
-  filename: "edges.csv"
+# Logging
+logs:
+  log_file: "logs/crawler.log"
+  log_level: "INFO"

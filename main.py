@@ -69,14 +69,16 @@ def main():
     
     parser.add_argument(
         '--config',
-        required=True,
-        help='Path to unified config YAML file'
+        required=False,
+        help='Path to unified config YAML file',
+        default='config.yaml'
     )
     
     parser.add_argument(
         '--seeds',
-        required=True,
-        help='Path to seeds file (one URL per line)'
+        required=False,
+        help='Path to seeds file (one URL per line)',
+        default='seeds.txt'
     )
     
     args = parser.parse_args()

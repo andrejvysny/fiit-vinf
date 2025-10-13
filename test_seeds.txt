@@ -1,2 +1,0 @@
-https://github.com/topics
-https://github.com/vinta/awesome-python

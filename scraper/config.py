@@ -74,8 +74,8 @@ class MetricsConfig:
 
 @dataclass
 class IndexConfig:
-    """LMDB page index configuration"""
-    db_path: str = "workspace/state/page_index.lmdb"
+    """File-based page index configuration"""
+    db_path: str = "workspace/state/page_index.jsonl"
 
 
 @dataclass

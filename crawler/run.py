@@ -22,7 +22,7 @@ from collections import defaultdict
 
 from .config import CrawlerConfig
 from .io.discoveries import DiscoveriesWriter
-from .frontier.frontier import Frontier
+from .frontier.frontier_file import FileFrontier
 from .frontier.dedup import DedupStore
 from .policy import UrlPolicy
 from .robots_cache import RobotsCache
@@ -48,7 +48,7 @@ class CrawlerService:
         self.spool_dir = Path(config.spool.discoveries_dir)
         
         # Components
-        self.frontier: Optional[Frontier] = None
+        self.frontier: Optional[FileFrontier] = None
         self.dedup: Optional[DedupStore] = None
         self.policy: Optional[UrlPolicy] = None
         self.robots: Optional[RobotsCache] = None
@@ -88,7 +88,7 @@ class CrawlerService:
         self.spool_dir.mkdir(parents=True, exist_ok=True)
         
         # Initialize components
-        self.frontier = Frontier(self.config.frontier.db_path)
+        self.frontier = FileFrontier(self.config.frontier.db_path)
         self.dedup = DedupStore(str(self.workspace / "state" / "seen"))
         self.robots = RobotsCache(
             user_agent=self.config.robots.user_agent,
@@ -104,7 +104,13 @@ class CrawlerService:
         for seed in seeds:
             canonical = canonicalize(seed)
             if not self.dedup.is_seen(canonical):
-                self.frontier.add(canonical, score=0.0)  # Depth 0
+                if not self.frontier.contains(canonical):
+                    self.frontier.add(
+                        canonical,
+                        depth=0,
+                        score=0.0,
+                        page_type="seed"
+                    )
                 self.dedup.mark_seen(canonical)
                 logger.info(f"Added seed: {canonical}")
         
@@ -224,7 +230,13 @@ class CrawlerService:
             return
         
         # Add to frontier and mark seen
-        self.frontier.add(canonical, score=float(depth))
+        self.frontier.add(
+            canonical,
+            depth=depth,
+            score=float(depth),
+            page_type=policy_result.get("page_type"),
+            referrer=referrer
+        )
         self.dedup.mark_seen(canonical)
         
         logger.debug(f"Enqueued: {canonical} (depth={depth})")

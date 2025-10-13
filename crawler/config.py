@@ -226,14 +226,14 @@ class CrawlerConfig:
         if "frontier" in raw:
             f = raw["frontier"]
             config.frontier = FrontierConfig(
-                db_path=str(workspace / "state" / f.get("db_name", "frontier.lmdb")),
+                db_path=str(workspace / "state" / f.get("db_name", "frontier.jsonl")),
                 bloom_path=str(workspace / "state" / f.get("bloom_name", "seen.bloom")),
                 bloom_capacity=f.get("bloom_capacity", 50_000_000),
                 bloom_error_rate=f.get("bloom_error_rate", 0.001)
             )
         else:
             config.frontier = FrontierConfig(
-                db_path=str(workspace / "state" / "frontier.lmdb"),
+                db_path=str(workspace / "state" / "frontier.jsonl"),
                 bloom_path=str(workspace / "state" / "seen.bloom")
             )
 
