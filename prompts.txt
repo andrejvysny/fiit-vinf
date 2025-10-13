@@ -1,0 +1,32 @@
+Act as software architect. Do thorough analysis of current codebase and write detailed architecture description and architecture mermaid graph. 
+
+Output put into one markdown file ARCHITECTURE.md
+
+Use iterative approach and analyze each module step by step. Use sequential thinking MCP. 
+
+
+---
+
+Do thorough analysis of crawl and scrape pipelines and write thorough step by step pipeline description. Detaily describe each pipeline step and explain everything. 
+
+Do not do any changes to existing content of ARCHITECTURE.md but only append it to the end. 
+
+Goal is to create detailed description of steps what crawler and scraper do and what technologies they use and how and where they save what data so user who has no idea about this project can get an idea.
+
+Do not take into consideration any markdown files focus only on codebase.
+
+Think hard and analyze codebase before writing anything. Use sequential thinking MCP for iterative approach.
+
+
+
+--- 
+
+
+Now based on pipeline description and current codebase generate detailed UML Sequence Diagram in mermaid. 
+
+Make sure to add every step into it. 
+
+Do not change existing content of ARCHITECTURE.md only append it to the end.
+
+---
+
