@@ -11725,3 +11725,24 @@
 2025-10-13 11:45:27 [WARNING] crawler.net.unified_fetcher: 429 Rate Limited: https://github.com/topics/jupyterhub, attempt 2/4
 2025-10-13 11:45:28 [INFO] httpx: HTTP Request: GET https://github.com/topics/jupyterhub "HTTP/2 429 Too Many Requests"
 2025-10-13 11:45:28 [WARNING] crawler.net.unified_fetcher: 429 Rate Limited: https://github.com/topics/jupyterhub, attempt 3/4
+2025-10-13 11:45:30 [INFO] httpx: HTTP Request: GET https://github.com/topics/jupyterhub "HTTP/2 429 Too Many Requests"
+2025-10-13 11:45:30 [WARNING] crawler.net.unified_fetcher: 429 Rate Limited: https://github.com/topics/jupyterhub, attempt 4/4
+2025-10-13 11:45:34 [WARNING] crawler.run_unified: Failed to fetch https://github.com/topics/jupyterhub: Max retries exceeded
+2025-10-13 11:45:34 [INFO] crawler.run_unified: Processing: https://github.com/jpmorganchase/ipyregulartable
+2025-10-13 11:45:34 [INFO] httpx: HTTP Request: GET https://github.com/jpmorganchase/ipyregulartable "HTTP/2 301 Moved Permanently"
+2025-10-13 11:45:35 [INFO] httpx: HTTP Request: GET https://github.com/finos/ipyregulartable "HTTP/2 200 OK"
+2025-10-13 11:45:35 [INFO] crawler.run_unified:   ✓ Fetched and stored: /Users/andrejvysny/fiit/vinf/workspace/store/html/9b/0b/9b0b5dd5c90189b673937fa1e75be1f2d9eed6c141c7cc07e78b229dcd68ff37.html (336184 bytes)
+2025-10-13 11:45:35 [INFO] crawler.run_unified:   → Extracted 111 links
+2025-10-13 11:45:35 [INFO] crawler.run_unified: Processing: https://github.com/jupyterlab/jupyterlab-celltags
+2025-10-13 11:45:36 [INFO] httpx: HTTP Request: GET https://github.com/jupyterlab/jupyterlab-celltags "HTTP/2 200 OK"
+2025-10-13 11:45:36 [INFO] crawler.run_unified:   ✓ Fetched and stored: /Users/andrejvysny/fiit/vinf/workspace/store/html/6f/4b/6f4b5e199356a4044c1a8d62891b6c73a4acee3d223c020b4693da4df3399081.html (304560 bytes)
+2025-10-13 11:45:36 [INFO] crawler.run_unified:   → Extracted 92 links
+2025-10-13 11:45:36 [INFO] crawler.run_unified: Processing: https://github.com/jupyterlab/jupyterlab-git
+2025-10-13 11:45:37 [INFO] httpx: HTTP Request: GET https://github.com/jupyterlab/jupyterlab-git "HTTP/2 200 OK"
+2025-10-13 11:45:37 [INFO] crawler.run_unified:   ✓ Fetched and stored: /Users/andrejvysny/fiit/vinf/workspace/store/html/59/4c/594c2a6060e2917bb63dbba14d5eb4898a206170c1c07a5e21c2397fe9b7f35c.html (462983 bytes)
+2025-10-13 11:45:37 [INFO] crawler.run_unified:   → Extracted 177 links
+2025-10-13 11:45:37 [INFO] crawler.run_unified: Processing: https://github.com/vega/vega-lite
+2025-10-13 11:45:38 [INFO] httpx: HTTP Request: GET https://github.com/vega/vega-lite "HTTP/2 200 OK"
+2025-10-13 11:45:38 [INFO] crawler.run_unified:   ✓ Fetched and stored: /Users/andrejvysny/fiit/vinf/workspace/store/html/ba/d4/bad43fbc1cebadd31dd5127d91e378b97487f545b569f80a078bf6e0b3690f95.html (329827 bytes)
+2025-10-13 11:45:38 [INFO] crawler.run_unified:   → Extracted 127 links
+2025-10-13 11:45:38 [INFO] crawler.run_unified: Processing: https://github.com/ReviewNB/treon
