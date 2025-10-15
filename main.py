@@ -1,53 +1,32 @@
-"""Unified Crawler CLI - main entry point.
-
-No separate scraper needed - single crawler fetches, stores, and extracts.
-"""
-
 import argparse
 import asyncio
 import logging
 import sys
 from pathlib import Path
 
-from crawler.config_unified import UnifiedCrawlerConfig
-from crawler.run_unified import UnifiedCrawlerService
+from crawler.config import CrawlerScraperConfig
+from crawler.service import CrawlerScraperService
 
-
-def setup_logging(log_level: str):
-    """Setup logging configuration."""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
 
 
 def load_seeds(seeds_file: str) -> list:
-    """Load seed URLs from file."""
     seeds = []
-    
     if not Path(seeds_file).exists():
         print(f"Error: Seeds file not found: {seeds_file}")
         sys.exit(1)
-    
     with open(seeds_file, 'r') as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith('#'):
                 seeds.append(line)
-    
     return seeds
 
 
-async def run_crawler(config: UnifiedCrawlerConfig, seeds: list):
-    """Run unified crawler."""
-    service = UnifiedCrawlerService(config)
+async def run_crawler(config: CrawlerScraperConfig, seeds: list):
+    service = CrawlerScraperService(config)
     
     try:
-        # Initialize and seed
         await service.start(seeds)
-        
-        # Run main loop
         await service.run()
         
     except KeyboardInterrupt:
@@ -57,14 +36,12 @@ async def run_crawler(config: UnifiedCrawlerConfig, seeds: list):
         import traceback
         traceback.print_exc()
     finally:
-        # Cleanup
         await service.stop()
 
 
 def main():
-    """Main entry point."""
     parser = argparse.ArgumentParser(
-        description='Unified GitHub Crawler (fetch + store in one operation)'
+        description='GitHub Crawler/Scraper'
     )
     
     parser.add_argument(
@@ -83,20 +60,20 @@ def main():
     
     args = parser.parse_args()
     
-    # Load config
     print(f"Loading configuration from: {args.config}")
-    config = UnifiedCrawlerConfig.from_yaml(args.config)
+    config = CrawlerScraperConfig.from_yaml(args.config)
     
-    # Setup logging
-    setup_logging(config.logs.log_level)
+    logging.basicConfig(
+        level=getattr(logging, config.logs.log_level.upper()),
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
     
-    # Load seeds
     print(f"Loading seeds from: {args.seeds}")
     seeds = load_seeds(args.seeds)
     print(f"Loaded {len(seeds)} seed URLs")
     
-    # Print config summary
-    print("\n=== Unified Crawler Configuration ===")
+    print("\n=== Crawler/Scraper Configuration ===")
     print(f"Run ID: {config.run_id}")
     print(f"Workspace: {config.workspace}")
     print(f"User Agent: {config.user_agent}")
@@ -106,9 +83,6 @@ def main():
     print(f"Metadata File: {config.storage.metadata_file}")
     print("====================================\n")
     
-    # Run
     asyncio.run(run_crawler(config, seeds))
-
-
 if __name__ == '__main__':
     main()

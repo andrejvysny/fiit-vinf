@@ -57,6 +57,7 @@ scope:
     - "\\?tab="     # Tab parameters
     - "\\?since="   # Time filters
     - "\\?until="   # Time filters
+    - "/resources/"  # Non-HTML resources
   
   # Only HTML content
   content_types: ["text/html"]

@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
-"""
-run - CLI wrapper for the unified crawler.
-
-This wrapper provides commands for the refactored single-fetch architecture:
-  - run       : Start unified crawler (fetch + store in one operation)
-  - configure : Create workspace directories
-  - reset     : Remove all workspace data
-"""
 
 import argparse
-import json
-import os
 import shutil
 import subprocess
 import sys
@@ -41,7 +31,6 @@ PYTHON_EXE = _find_python_executable()
 
 
 def _workspace_configured() -> bool:
-    """Return True when workspace scaffolding already exists."""
     required_dirs = (STATE_DIR, METADATA_DIR, STORE_DIR, LOGS_DIR)
     if not all(path.is_dir() for path in required_dirs):
         return False
@@ -49,18 +38,13 @@ def _workspace_configured() -> bool:
 
 
 def configure(args=None):
-    """Create workspace directories for unified crawler."""
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     METADATA_DIR.mkdir(parents=True, exist_ok=True)
     STORE_DIR.mkdir(parents=True, exist_ok=True)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Ensure default seeds file exists
     if not SEEDS_FILE.exists():
-        default_seeds = """# GitHub Crawler Seeds
-# One URL per line, comments start with #
-https://github.com/
-"""
+        default_seeds = "https://github.com/"
         SEEDS_FILE.write_text(default_seeds)
         print(f"Created default seeds file: {SEEDS_FILE}")
     
@@ -72,20 +56,6 @@ https://github.com/
 
 
 def reset(args=None):
-    """Remove all workspace data after confirmation."""
-    print("This will REMOVE ALL crawled data:")
-    print(f"  - State files (frontier, dedup, robots cache): {STATE_DIR}")
-    print(f"  - Metadata: {METADATA_DIR}")
-    print(f"  - HTML store: {STORE_DIR}")
-    print(f"  - Logs: {LOGS_DIR}")
-    print()
-    answer = input("Type 'yes' to confirm: ")
-    
-    if answer.strip().lower() != "yes":
-        print("Aborted.")
-        return
-    
-    # Remove contents but keep directories
     def rm_contents(path: Path):
         if path.exists():
             for child in path.iterdir():
@@ -107,7 +77,6 @@ def reset(args=None):
 
 
 def run(args):
-    """Run unified crawler."""
     if not _workspace_configured():
         configure()
     
@@ -131,8 +100,8 @@ def run(args):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="vi-scrape-unified",
-        description="Unified crawler wrapper - single fetch architecture"
+        prog="run",
+        description="Github Crawler CLI Wrapper",
     )
     
     sub = parser.add_subparsers(dest="cmd")
@@ -141,7 +110,7 @@ def main(argv=None):
     p_run = sub.add_parser("run", help="Start unified crawler")
     p_run.add_argument("--config", help="Config path (default: config.yaml)")
     p_run.add_argument("--seeds", help="Seeds file path (default: seeds.txt)")
-    
+
     # Configure command
     sub.add_parser("configure", help="Create workspace directories (idempotent)")
     

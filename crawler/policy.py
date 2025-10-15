@@ -10,39 +10,42 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 
 from .url_tools import canonicalize, is_github_url
-from .robots_cache import RobotsCache
-from .config import CrawlerConfig
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class UrlPolicy:
-    """Enforces URL crawling policy with strict deny-by-default."""
-    
-    def __init__(self, config: CrawlerConfig, robots: RobotsCache):
+    """Enforces URL crawling policy with strict deny-by-default.
+
+    Notes:
+    - This class expects a config-like object (supports attributes used below)
+      and a robots cache instance that provides `is_allowed(url)` or
+      `can_fetch(url)` coroutine methods. This keeps compatibility with the
+      unified config (`UnifiedCrawlerConfig`) and `FileRobotsCache`.
+    """
+
+    def __init__(self, config: Any, robots: Any):
         """Initialize URL policy.
-        
+
         Args:
-            config: Crawler configuration
-            robots: Robots.txt cache instance
+            config: Crawler configuration (any object with .scope attributes)
+            robots: Robots.txt cache instance (provides is_allowed / can_fetch)
         """
         self.config = config
         self.robots = robots
-        
+
         # Compile regex patterns for efficiency
-        self.allow_patterns = [
-            re.compile(pattern) for pattern in config.scope.allow_patterns
-        ]
-        self.deny_patterns = [
-            re.compile(pattern) for pattern in config.scope.deny_patterns
-        ]
-        
+        self.allow_patterns = [re.compile(pattern) for pattern in getattr(config.scope, 'allow_patterns', [])]
+        self.deny_patterns = [re.compile(pattern) for pattern in getattr(config.scope, 'deny_patterns', [])]
+
         # Convert host lists to sets for O(1) lookup
-        self.allowed_hosts = set(config.scope.allowed_hosts)
-        self.denied_subdomains = set(config.scope.denied_subdomains)
-        
-        logger.info(f"Policy initialized with {len(self.allow_patterns)} allow patterns, "
-                   f"{len(self.deny_patterns)} deny patterns")
+        self.allowed_hosts = set(getattr(config.scope, 'allowed_hosts', []))
+        self.denied_subdomains = set(getattr(config.scope, 'denied_subdomains', []))
+
+        logger.info(
+            f"Policy initialized with {len(self.allow_patterns)} allow patterns, {len(self.deny_patterns)} deny patterns"
+        )
     
     def classify(self, url: str) -> Optional[str]:
         """Classify the page type of a URL.
@@ -170,7 +173,12 @@ class UrlPolicy:
             }
         
         # Check robots.txt
-        robots_allowed = await self.robots.is_allowed(canonical)
+        # robots cache may expose is_allowed or can_fetch
+        robots_allowed = True
+        if hasattr(self.robots, 'is_allowed'):
+            robots_allowed = await self.robots.is_allowed(canonical)
+        elif hasattr(self.robots, 'can_fetch'):
+            robots_allowed = await self.robots.can_fetch(canonical)
         if not robots_allowed:
             return {
                 "ok": False,

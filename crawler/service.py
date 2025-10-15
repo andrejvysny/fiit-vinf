@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from collections import defaultdict
 
-from crawler.config_unified import UnifiedCrawlerConfig
+from crawler.config import CrawlerScraperConfig
 from crawler.frontier.frontier_file import FileFrontier
 from crawler.frontier.dedup_file import FileDedupStore
 from crawler.policy import UrlPolicy
@@ -29,15 +29,9 @@ from crawler.url_tools import canonicalize, extract_repo_info
 logger = logging.getLogger(__name__)
 
 
-class UnifiedCrawlerService:
-    """Unified crawler with single-fetch architecture."""
-    
-    def __init__(self, config: UnifiedCrawlerConfig):
-        """Initialize unified crawler service.
-        
-        Args:
-            config: Crawler configuration
-        """
+class CrawlerScraperService:
+
+    def __init__(self, config: CrawlerScraperConfig):        
         self.config = config
         self.workspace = config.get_workspace_path()
         
