@@ -12,15 +12,14 @@ This refactored crawler:
 import asyncio
 import logging
 import time
+import random
 from pathlib import Path
 from typing import List, Optional, Dict
 from collections import defaultdict
 
 from crawler.config import CrawlerScraperConfig
-from crawler.frontier.frontier_file import FileFrontier
-from crawler.frontier.dedup_file import FileDedupStore
-from crawler.policy import UrlPolicy
-from crawler.robots_cache_file import FileRobotsCache
+from crawler.frontier.crawl_frontier import CrawlFrontier
+from crawler.crawl_policy import CrawlPolicy
 from crawler.parse.extractor import LinkExtractor
 from crawler.net.unified_fetcher import UnifiedFetcher
 from crawler.io.metadata_writer import UnifiedMetadataWriter
@@ -36,10 +35,8 @@ class CrawlerScraperService:
         self.workspace = config.get_workspace_path()
         
         # Components (initialized in start())
-        self.frontier: Optional[FileFrontier] = None
-        self.dedup: Optional[FileDedupStore] = None
-        self.robots: Optional[FileRobotsCache] = None
-        self.policy: Optional[UrlPolicy] = None
+        self.frontier: Optional[CrawlFrontier] = None
+        self.policy: Optional[CrawlPolicy] = None
         self.fetcher: Optional[UnifiedFetcher] = None
         self.extractor: Optional[LinkExtractor] = None
         self.metadata_writer: Optional[UnifiedMetadataWriter] = None
@@ -72,6 +69,9 @@ class CrawlerScraperService:
         # Periodic save interval
         self._last_frontier_save = time.time()
         self._frontier_save_interval = 60  # Save frontier every 60 seconds
+        
+        # Dynamic sleep tracking for batch pauses
+        self._request_counter = 0
     
     async def start(self, seeds: List[str]) -> None:
         """Initialize components and seed frontier.
@@ -90,24 +90,19 @@ class CrawlerScraperService:
         metadata_dir.mkdir(parents=True, exist_ok=True)
         store_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize file-based frontier
+        # Initialize unified crawl frontier (includes deduplication)
         frontier_path = state_dir / "frontier.jsonl"
-        self.frontier = FileFrontier(str(frontier_path))
-        
-        # Initialize file-based dedup
         dedup_path = state_dir / "fetched_urls.txt"
-        self.dedup = FileDedupStore(str(dedup_path))
+        self.frontier = CrawlFrontier(str(frontier_path), str(dedup_path))
         
-        # Initialize file-based robots cache
+        # Initialize unified crawl policy (includes robots.txt cache)
         robots_path = state_dir / "robots_cache.jsonl"
-        self.robots = FileRobotsCache(
-            str(robots_path),
+        self.policy = CrawlPolicy(
+            self.config,
+            cache_path=str(robots_path),
             user_agent=self.config.robots.user_agent,
             cache_ttl_sec=self.config.robots.cache_ttl_sec
         )
-        
-        # Initialize policy (uses robots cache)
-        self.policy = UrlPolicy(self.config, self.robots)
         
         # Initialize unified fetcher (fetch + store in one operation)
         self.fetcher = UnifiedFetcher(
@@ -138,7 +133,7 @@ class CrawlerScraperService:
             canonical = canonicalize(seed)
             
             # Check if already fetched (resume support)
-            if self.dedup.is_fetched(canonical):
+            if self.frontier.is_fetched(canonical):
                 logger.info(f"Seed already fetched (resume): {canonical}")
                 continue
             
@@ -157,7 +152,7 @@ class CrawlerScraperService:
         # Save initial frontier state
         self.frontier.persist()
         
-        logger.info(f"Crawler initialized. Frontier size: {self.frontier.size()}, Already fetched: {self.dedup.size()}")
+        logger.info(f"Crawler initialized. Frontier size: {self.frontier.size()}, Already fetched: {self.frontier.fetched_count()}")
     
     async def run(self) -> None:
         """Main crawler loop - pop, fetch, store, extract, enqueue."""
@@ -189,6 +184,26 @@ class CrawlerScraperService:
                 
                 # Process URL (fetch + store + extract + enqueue)
                 await self._process_url(url)
+                
+                # Increment request counter
+                self._request_counter += 1
+                
+                # Apply dynamic sleep after each request
+                per_request_sleep = random.uniform(
+                    self.config.sleep.per_request_min,
+                    self.config.sleep.per_request_max
+                )
+                logger.info(f"Sleeping for {per_request_sleep:.2f}s after request...")
+                await asyncio.sleep(per_request_sleep)
+                
+                # Apply batch pause after N requests
+                if self._request_counter % self.config.sleep.batch_size == 0:
+                    batch_pause = random.uniform(
+                        self.config.sleep.batch_pause_min,
+                        self.config.sleep.batch_pause_max
+                    )
+                    logger.info(f"Batch pause ({self._request_counter} requests) - sleeping for {batch_pause:.2f}s...")
+                    await asyncio.sleep(batch_pause)
                 
                 # Periodically save frontier state
                 if time.time() - self._last_frontier_save > self._frontier_save_interval:
@@ -222,7 +237,7 @@ class CrawlerScraperService:
         page_type = self.policy.classify(url)
         
         # Check if already fetched (shouldn't happen but double-check)
-        if self.dedup.is_fetched(url):
+        if self.frontier.is_fetched(url):
             logger.debug(f"URL already fetched (skipping): {url}")
             self.stats["already_fetched"] += 1
             return
@@ -231,7 +246,7 @@ class CrawlerScraperService:
         result = await self.fetcher.fetch_and_store(url)
         
         # Mark as fetched immediately
-        self.dedup.mark_fetched(url)
+        self.frontier.mark_fetched(url)
         
         if not result.get('ok'):
             # Fetch failed
@@ -311,9 +326,11 @@ class CrawlerScraperService:
         """
         # Canonicalize
         canonical = canonicalize(url)
+        if referrer and canonical == referrer:
+            return
         
         # Check if already fetched
-        if self.dedup.is_fetched(canonical):
+        if self.frontier.is_fetched(canonical):
             return
         
         # Check if already in frontier
@@ -326,6 +343,13 @@ class CrawlerScraperService:
             self.stats["policy_denied"] += 1
             logger.debug(f"Policy denied {canonical}: {policy_result['reason']}")
             return
+        canonical_url = policy_result.get("canonical_url", canonical)
+        if canonical_url != canonical:
+            canonical = canonical_url
+            if referrer and canonical == referrer:
+                return
+            if self.frontier.is_fetched(canonical) or self.frontier.contains(canonical):
+                return
         
         # Check caps (per-repo limits)
         if not self._check_caps(canonical, policy_result.get("page_type")):
@@ -402,11 +426,8 @@ class CrawlerScraperService:
         if self.frontier:
             self.frontier.close()
         
-        if self.dedup:
-            self.dedup.close()
-        
-        if self.robots:
-            self.robots.close()
+        if self.policy:
+            self.policy.close()
         
         if self.fetcher:
             await self.fetcher.close()

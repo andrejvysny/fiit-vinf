@@ -66,6 +66,28 @@ class LogsConfig:
 
 
 @dataclass
+class SleepConfig:
+    """Dynamic sleep/pause configuration for human-like crawling behavior."""
+    per_request_min: float = 2.0
+    per_request_max: float = 5.0
+    batch_pause_min: float = 10.0
+    batch_pause_max: float = 20.0
+    batch_size: int = 10
+    
+    def __post_init__(self):
+        if self.per_request_min < 0:
+            raise ValueError("sleep.per_request_min must be >= 0")
+        if self.per_request_max < self.per_request_min:
+            raise ValueError("sleep.per_request_max must be >= per_request_min")
+        if self.batch_pause_min < 0:
+            raise ValueError("sleep.batch_pause_min must be >= 0")
+        if self.batch_pause_max < self.batch_pause_min:
+            raise ValueError("sleep.batch_pause_max must be >= batch_pause_min")
+        if self.batch_size < 1:
+            raise ValueError("sleep.batch_size must be >= 1")
+
+
+@dataclass
 class CrawlerScraperConfig:
     run_id: str
     workspace: str
@@ -79,6 +101,7 @@ class CrawlerScraperConfig:
     caps: CapsConfig = None
     storage: StorageConfig = None
     logs: LogsConfig = None
+    sleep: SleepConfig = None
 
     def __post_init__(self):
         if not self.user_agent:
@@ -100,6 +123,7 @@ class CrawlerScraperConfig:
         caps_cfg = CapsConfig(**data.get('caps', {}))
         storage_cfg = StorageConfig(**data.get('storage', {}))
         logs_cfg = LogsConfig(**data.get('logs', {}))
+        sleep_cfg = SleepConfig(**data.get('sleep', {}))
 
         config = cls(
             run_id=data['run_id'],
@@ -112,7 +136,8 @@ class CrawlerScraperConfig:
             limits=limits_cfg,
             caps=caps_cfg,
             storage=storage_cfg,
-            logs=logs_cfg
+            logs=logs_cfg,
+            sleep=sleep_cfg
         )
 
         return config

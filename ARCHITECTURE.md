@@ -1,715 +1,271 @@
-# Architecture Overview
+# Architecture Reference
 
-This document describes the architecture of the GitHub-focused crawler & scraper
-project. It maps modules to responsibilities, describes data flows and file
-layout, and includes mermaid diagrams that illustrate interactions and the
-crawl/scrape pipelines.
+## Overview
+- Single-process async crawler tailored to GitHub; entry point `main.py` wires configuration, logging, and seeds, then drives `CrawlerScraperService`.
+- Core service unifies crawl, fetch, storage, link extraction, configurable pacing, and metadata emission in one loop to guarantee each URL is fetched once and persisted immediately.
+- File-backed state under `workspace/` guarantees resume support: queue and deduplication (`state/`), HTML blobs (`store/html/`), and metadata ledger (`metadata/crawl_metadata.jsonl`).
+- Policy and URL utilities enforce a GitHub-only, allowlist-driven scope augmented with robots.txt caching.
 
-## High-level modes
+## Runtime Flow
+1. CLI handles arguments (`--config`, `--seeds`), loads YAML config via `CrawlerScraperConfig.from_yaml`, and seeds via `load_seeds`.
+2. `CrawlerScraperService.start` prepares directories, instantiates frontier, policy, fetcher, extractor, and metadata writer, then canonicalizes and enqueues seed URLs.
+3. `CrawlerScraperService.run` loops while frontier non-empty: pop URL, fetch+store via `UnifiedFetcher`, append metadata, extract links, and enqueue allowed children respecting depth, policy, and per-repo caps. Each iteration applies configurable per-request and batch sleeps to mimic human pacing.
+4. Periodic persistence ensures `frontier.jsonl` mirrors in-memory queue; `fetched_urls.txt` appends immediately on mark.
+5. `stop` closes components, flushes files, and logs aggregated metrics.
 
-There are two coexisting modes in this repository:
+## Module-by-Module Analysis
 
-- Separated mode: `crawler/` (discovery producer) writes newline-delimited
-  discovery JSONL files to `workspace/spool/discoveries/`. The `scraper/`
-  process tails the spool, fetches HTML, stores content under
-  `workspace/store/html/` and writes per-page CSV metadata under
-  `workspace/logs/`.
-- Unified mode: a single process performs fetch + store + extract in one
-  operation (see `crawler/config_unified.py`, `crawler/run_unified.py`,
-  `main.py`). Unified mode uses file-based stores and writes combined
-  metadata into `workspace/metadata/crawl_metadata.jsonl`.
+### `main.py`
+- Orchestrates CLI parsing, logging setup, config+seed loading, and asynchronous lifecycle (`start` → `run` → `stop`).
+- Reports run metadata (workspace, user agent, limits) before delegating to Python's async event loop.
 
-Both modes follow the same project-wide conventions: file-based state,
-content-addressed HTML store, config-driven behavior, and a policy-first
-approach to what gets crawled.
+### `crawler/config.py`
+- Houses data classes for robots, scope, limits, caps, dynamic sleep windows, storage, and logging with validation in `__post_init__`.
+- `CrawlerScraperConfig.from_yaml` materializes nested configs ensuring `workspace` and `user_agent` exist; `get_workspace_path` resolves base path for state directories.
 
-## Core components and responsibilities
+### `crawler/service.py`
+- Central coordinator containing:
+  - Component assembly in `start` (frontier, policy, fetcher, extractor, metadata writer).
+  - Seed canonicalization with deduplication awareness (`is_fetched`, `contains`).
+  - Main loop enforcing stop flag, frontier emptiness wait, periodic persistence, and configurable per-request/batch sleeps derived from `SleepConfig`.
+  - `_process_url` implementing fetch/store/metadata/extract/enqueue pipeline with error handling and stats.
+  - `_enqueue_url` aligning canonicalization, policy gate, robots compliance, per-repo caps, and BFS scoring.
+  - `_check_caps` increments repo-scoped counters for pages/issues/PRs using `url_tools.extract_repo_info`.
+  - `stop` ensures graceful shutdown and component closure.
 
-- Top-level CLI / runner
-  - `run` — workspace scaffolding, `configure`, `reset`, `run` wrapper.
-  - `main.py` — entry for unified crawler.
+### `crawler/frontier/crawl_frontier.py`
+- Merges queue and deduplication in `CrawlFrontier`:
+  - Loads/persists JSONL queue of `FrontierItem` for BFS order; sorts by `(depth, score, discovered_at)`.
+  - Tracks fetched URLs set with append-only `fetched_urls.txt` for O(1) deduplication across restarts.
+  - Provides `add`, `pop`, `contains`, `persist`, and `compact` for lifecycle control.
 
-- Crawler (discovery producer)
-  - `crawler/run.py` (full crawler mode): maintains frontier, dedup store,
-    robots cache and policy checking; fetches pages, extracts links, emits
-    discovery JSONL lines to spool.
-  - `crawler/run_unified.py` (unified crawler service): single-process
-    fetching + storage + extraction; writes unified metadata via
-    `crawler/io/metadata_writer.py`.
-  - `crawler/config.py`, `crawler/config_unified.py`: configuration schema and
-    validation. Configs define workspace paths, scope allow/deny patterns,
-    rate limits, and caps.
+### `crawler/crawl_policy.py`
+- Enforces scope via allow/deny regexes, host allowlist, and denied subdomains.
+- Maintains robots cache in JSONL with TTL; fetches via `httpx` when stale using `RobotFileParser`.
+- `gate` canonicalizes URL, applies structural checks, patterns, robots compliance, and classifies pages (`repo_root`, `issues`, `pull`, etc.).
 
-- Frontier & Dedup
-  - `crawler/frontier/frontier_file.py` (`FileFrontier`): file-backed priority
-    queue (JSONL) used for BFS ordering. It loads into memory and persists via
-    periodic rewrite; supports compaction by removing fetched urls.
-  - `crawler/frontier/dedup_file.py` (`FileDedupStore`): append-only
-    `fetched_urls.txt` in `workspace/state/` that is loaded into an in-memory
-    set for O(1) lookups and appended to as URLs are fetched.
+### `crawler/net/unified_fetcher.py`
+- Async HTTP client using `httpx.AsyncClient` with rate limiting (`_wait_for_rate_limit`), retries, and exponential backoff.
+- `fetch_and_store` downloads content, reports latency and headers, stores HTML in content-addressed tree (`aa/bb/hash.html`), and returns decoded HTML for extraction.
+- `_store_html` handles deduplicated writes, optional compression via the `zstandard` package, and permission setting.
 
-- Policy & Robots
-  - `crawler/policy.py` and `crawler/robots_cache_file.py`: enforce the
-    `scope.allow_patterns` and `deny_patterns` in config, and consult robots
-    caches before allowing URLs to be enqueued or fetched.
+### `crawler/parse/extractor.py`
+- `LinkExtractor.extract` scans anchor tags via compiled regular expressions, resolves relative anchors, removes fragments, filters schemes, and returns unique HTTP(S) links in discovery order.
 
-- Fetchers & Storage
-  - `crawler/net/fetcher.py` and `crawler/net/unified_fetcher.py` /
-    `scraper/net/fetcher.py`: HTTP clients built on `httpx` (async) with
-    timeouts, retries, and optional HTTP/2. Unified fetcher integrates storage
-    (content-addressed) into the same operation.
-  - `crawler/io/metadata_writer.py` (UnifiedMetadataWriter): writes
-    unified crawl+scrape JSONL metadata to `workspace/metadata/crawl_metadata.jsonl`.
-  - `scraper/io/storage.py` (`HtmlStore`): content-addressed HTML (sha256) at
-    `workspace/store/html/aa/bb/<sha>.html` (optional `.zst` compression).
+### `crawler/io/metadata_writer.py`
+- `UnifiedMetadataWriter` appends crawl+fetch metadata to JSONL, providing `build_record` helper to standardize fields and `write` for durable persistence.
 
-- Spool & Scraper
-  - `crawler/io/discoveries.py` (`DiscoveriesWriter`): writes discoveries to
-    `workspace/spool/discoveries/discoveries-<ts>.jsonl`.
-  - `scraper/io/spool.py` (`SpoolReader`): tails `discoveries-*.jsonl` with a
-    `.state/spool_bookmark.json` bookmark for resume; yields discovery items
-    with offset checkpointing.
-  - `scraper/run.py` (`ScraperService`): orchestrates spool reader, fetcher,
-    html store, page index and CSV writer. Handles backpressure, control
-    flags, metrics, graceful shutdown and replay mode.
+### `crawler/url_tools.py`
+- Provides canonicalization (lowercasing, fragment removal, query filtering, path normalization), host checks, repo extraction, and depth estimation to keep deduplication semantics stable across restarts.
 
-- Index & CSVs
-  - `scraper/index/page_index.py` (`PageIndex`): append-only JSONL index
-    loaded into memory for conditional requests (ETag/Last-Modified) and
-    deduplication. Supports compaction and atomic append.
-  - `scraper/io/csv_writer.py` (`PagesCsv`): append rows to pages CSV used
-    by downstream analytics.
+### Legacy/Placeholder Modules
+- `crawler/io/discoveries.py` intentionally raises `ImportError` to prevent use of legacy spool writers.
+- `crawler/io/metrics.py`, `crawler/io/trajectory.py`, `crawler/net/limiter.py`, and `crawler/net/proxy_client.py` are placeholders for future enhancements (currently empty).
 
-- Control & Utilities
-  - `scraper/control/flags.py` (`ControlFlags`): simple manager control via
-    workspace files (`pause.scraper`, `stop.scraper`) used by the scrapers to
-    pause/resume or stop gracefully.
-  - `scraper/util/*` — helpers like `limits.py`, `bytes.py`, `signals.py`.
+## Persistence & State Layout
+- `workspace/state/frontier.jsonl`: queued `FrontierItem` records enabling resumable BFS frontier.
+- `workspace/state/fetched_urls.txt`: append-only log of canonical URLs to avoid refetching.
+- `workspace/state/robots_cache.jsonl`: robots cache entries with expiry metadata.
+- `workspace/store/html/<sha>`: content-addressed HTML blobs (optionally compressed) enforced by fetcher.
+- `workspace/metadata/crawl_metadata.jsonl`: append-only metadata ledger for analytics or downstream processing.
+- Logging routed via Python logging to stdout and `workspace/logs/crawler.log` (per `config.logs`).
 
-## Data flows and storage
+## Configuration Inputs
+- `config.yaml` defines run metadata, scope rules, rate limits, caps, sleep windows, storage paths, and logging level.
+- `seeds.txt` supplies initial URLs; loader strips comments and blank lines.
+- `CrawlerScraperConfig` ensures new knobs require data class/validation updates for cohesion.
 
-- Discovery spool (crawler -> scraper): newline-delimited JSONL files in
-  `workspace/spool/discoveries/`. Each discovery is a JSON object with keys
-  like `url`, `page_type`, `depth`, `referrer`, and `metadata`.
-- Spool bookmark: `workspace/state/spool_bookmark.json` tracks current file and
-  offset for the scraper so it can resume.
-- HTML store: content-addressed files under `workspace/store/html/aa/bb/<sha>.html`.
-- Unified metadata: `workspace/metadata/crawl_metadata.jsonl` (JSONL of per-page
-  metadata combining crawl and fetch fields).
-- Pages CSV: `workspace/logs/pages-<run_id>.csv` (tabular rows describing stored pages).
+## Extensibility Considerations
+- Adding page types requires updating `CrawlPolicy.classify` and `_check_caps` counters plus corresponding `CapsConfig` fields.
+- Enabling compression demands `zstandard` dependency and toggling `storage.html_compress` wiring into `UnifiedFetcher` constructor.
+- Concurrency changes must preserve `UnifiedFetcher` rate lock and `CrawlFrontier` persistence atomicity.
+- Support for non-GitHub scopes would involve extending `ScopeConfig` patterns and `url_tools` normalization rules.
 
-## Conventions & important checks
+## Operational Notes
+- Crawler is single-threaded with async networking; ensure rate limits align with GitHub ToS.
+- Resume behavior relies on canonical URLs; modifications to canonicalization must maintain backwards compatibility with existing state files.
+- Metadata and frontier files grow without rotation; operational scripts may need to archive or prune as runs scale.
 
-- Always respect `scope.allow_patterns` and `deny_patterns` defined in config
-  when making policy decisions. The `UrlPolicy` class is authoritative.
-- When changing storage layout or hashing, update `crawler/io/metadata_writer.py`
-  and `scraper/index/page_index.py` so downstream tools can still find files.
-- The repository emphasizes file-based state (not LMDB) for portability: do
-  not silently switch to DB-backed stores without adding bridging code.
-
-## Sequence diagram — crawler (separated) -> scraper pipeline
-
-The following mermaid sequence diagram shows interactions when running the
-separated pipeline (producer crawler writes spool files, scraper tails them,
-fetches pages, stores HTML, writes CSV and updates index).
-
+## Architecture Diagram
 ```mermaid
-sequenceDiagram
-    participant Crawler as Crawler (producer)
-    participant Frontier as Frontier (FileFrontier)
-    participant Dedup as Dedup (FileDedupStore)
-    participant Policy as UrlPolicy
-    participant Robots as RobotsCache
-    participant Fetcher as CrawlerFetcher
-    participant Discoveries as DiscoveriesWriter (spool)
-    participant Spool as Spool (file system)
-    participant Scraper as ScraperService
-    participant SpoolReader as SpoolReader
-    participant PageIndex as PageIndex
-    participant FetcherS as Fetcher (scraper)
-    participant HtmlStore as HtmlStore
-    participant PagesCsv as PagesCsv
-
-    Crawler->>Frontier: pop URL
-    Frontier-->>Crawler: URL
-    Crawler->>Dedup: check seen
-    Dedup-->>Crawler: not seen
-    Crawler->>Policy: classify & gate URL
-    Policy->>Robots: consult robots cache
-    Robots-->>Policy: allow/deny
-    Policy-->>Crawler: allowed
-    Crawler->>Fetcher: fetch page
-    Fetcher-->>Crawler: HTML + fetch metadata
-    Crawler->>Discoveries: write discovery JSONL
-    Discoveries-->>Spool: append file
-
-    Note over Spool,SpoolReader: Spool file(s) appear on disk
-
-    Scraper->>SpoolReader: tail spool via `iter_items()`
-    SpoolReader-->>Scraper: discovery item
-    Scraper->>PageIndex: get(url) for conditional request (ETag)
-    PageIndex-->>Scraper: prev metadata or None
-    Scraper->>FetcherS: fetch_html(url, prev)
-    FetcherS-->>Scraper: response, headers, html_bytes
-    Scraper->>HtmlStore: save(html_bytes)
-    HtmlStore-->>Scraper: stored_path, sha256
-    Scraper->>PageIndex: put(index_record)
-    Scraper->>PagesCsv: append(row)
-
-    Note over Scraper,PagesCsv: metrics incremented & CSV flushed periodically
+flowchart TD
+    CLI[main.py CLI] -->|load config + seeds| CFG[Config Dataclasses]
+    CLI -->|async run| SVC[CrawlerScraperService]
+    SVC -->|init| FRONTIER[CrawlFrontier]
+    SVC -->|init| POLICY[CrawlPolicy]
+    SVC -->|init| FETCHER[UnifiedFetcher]
+    SVC -->|init| EXTRACTOR[LinkExtractor]
+    SVC -->|init| METADATA[UnifiedMetadataWriter]
+    CFG -->|sleep windows| SVC
+    SVC -->|enqueue| FRONTIER
+    FRONTIER -->|pop next URL| SVC
+    SVC -->|fetch| FETCHER
+    FETCHER -->|HTML + metadata| SVC
+    FETCHER -->|store| HTMLSTORE[(workspace/store/html)]
+    SVC -->|record| METADATA
+    METADATA -->|append| METASTORE[(workspace/metadata/crawl_metadata.jsonl)]
+    SVC -->|policy check| POLICY
+    POLICY -->|robots cache| ROBOTS[(workspace/state/robots_cache.jsonl)]
+    SVC -->|mark| FETCHED[(workspace/state/fetched_urls.txt)]
+    SVC -->|persist frontier| FRONTSTORE[(workspace/state/frontier.jsonl)]
 ```
 
-## Sequence diagram — unified crawler (single process)
-
-In unified mode the crawler performs fetch+store+extract in one operation; the
-sequence below reflects `crawler/run_unified.py` behavior.
-
+## Crawl & Scrape Sequence Diagram
 ```mermaid
 sequenceDiagram
-    participant UnifiedService as UnifiedCrawlerService
-    participant Frontier as FileFrontier
-    participant Dedup as FileDedupStore
-    participant Robots as FileRobotsCache
-    participant Policy as UrlPolicy
-    participant UnifiedFetcher as UnifiedFetcher
-    participant Metadata as UnifiedMetadataWriter
-    participant Extractor as LinkExtractor
+  participant User
+  participant CLI as "main.py CLI"
+  participant Config as "CrawlerScraperConfig"
+  participant Service as "CrawlerScraperService"
+  participant Frontier as "CrawlFrontier"
+  participant Policy as "CrawlPolicy"
+  participant Fetcher as "UnifiedFetcher"
+  participant Extractor as "LinkExtractor"
+  participant Metadata as "MetadataWriter"
+  participant Robots as "robots_cache.jsonl"
+  participant HTML as "HTML Store"
+  participant Fetched as "fetched_urls.txt"
+  participant FrontierFile as "frontier.jsonl"
 
-    UnifiedService->>Frontier: pop URL
-    Frontier-->>UnifiedService: URL
-    UnifiedService->>Dedup: is_fetched?
-    Dedup-->>UnifiedService: not fetched
-    UnifiedService->>Policy: classify
-    Policy->>Robots: consult
-    Robots-->>Policy: allowed
-    UnifiedService->>UnifiedFetcher: fetch_and_store(url)
-    UnifiedFetcher-->>UnifiedService: stored_path, sha256, html, metadata
-    UnifiedService->>Metadata: build_record + write
-    UnifiedService->>Extractor: extract(html)
-    Extractor-->>UnifiedService: list of links
-    UnifiedService->>Frontier: add(new links)
-    UnifiedService->>Dedup: mark_fetched(url)
+  User->>CLI: Run `python main.py --config config.yaml --seeds seeds.txt`
+  CLI->>Config: Load YAML via `from_yaml`
+  CLI->>Service: Instantiate with config
+  CLI->>Service: `start(seeds)`
+  Service->>Frontier: Initialize queue & dedup state
+  Service->>Policy: Initialize with allow/deny & robots cache path
+  Service->>Fetcher: Configure httpx client & rate limiter
+  Service->>Extractor: Instantiate regex extractor
+  Service->>Metadata: Open `crawl_metadata.jsonl`
+  loop Seeds
+    Service->>Frontier: `add(canonical_seed, depth=0)`
+  end
+  Service->>FrontierFile: `persist()` initial queue snapshot
+  CLI->>Service: `run()`
 
-    Note over UnifiedService,Metadata: unified metadata contains both crawl and fetch fields
-```
-
-## Practical examples and pointers (where to edit safely)
-
-- To change rate limits or UA: edit `config.yaml` or `crawler/config_unified.py`.
-- To add a new field to metadata: update `crawler/io/metadata_writer.py` and
-  the `build_record()` call sites in `crawler/run_unified.py` and
-  `crawler/run.py` or `scraper/run.py` depending on mode.
-- To change storage layout: modify `scraper/io/storage.py` (`HtmlStore`) and
-  `crawler/net/unified_fetcher.py` `_store_html()` so both agree on file paths.
-
-## Next steps (suggested)
-
-- Add a short `ARCHITECTURE.md` section that documents the exact JSON schema
-  for discovery items and unified metadata records (helpful for downstream
-  tooling). I can extract example records from code and append them if you
-  want.
-- Add smoke tests that validate: (a) producing a discovery, (b) scraping it
-  in replay mode (no network), and (c) verifying index/CVS rows are written.
-
-If you want, I will append example JSON schemas and a small mermaid class
-diagram for record shapes next. Otherwise tell me which area you'd like
-expanded and I'll iterate.
-
-## Detailed step-by-step pipeline descriptions (crawl & scrape)
-
-Below are thorough, sequential descriptions of the runtime pipelines implemented
-in the codebase. Each step references the module or function responsible and
-notes where data is written on disk. This is written from the code (not from
-existing markdown) and is intended for readers who have no prior knowledge of
-the project.
-
-Note: file paths below are relative to the repository root and the configured
-`workspace` directory (usually `./workspace`).
-
-### A. Crawler (separated mode) — producer pipeline (high level)
-
-Purpose: discover new URLs and emit discovery objects to the spool for the
-scraper to consume. Key code: `crawler/run.py`, `crawler/frontier/frontier_file.py`,
-`crawler/frontier/dedup_file.py`, `crawler/net/fetcher.py`,
-`crawler/io/discoveries.py`, `crawler/policy.py`.
-
-Steps (strict sequence):
-
-1. Initialization
-   - `CrawlerService.start()` constructs components:
-     - `FileFrontier(self.config.frontier.db_path)` loads or creates
-       the frontier file (JSONL) and imports entries into an in-memory
-       BFS-ordered queue. (file: `crawler/frontier/frontier_file.py`)
-     - `DedupStore` / `FileDedupStore` loads `workspace/state/fetched_urls.txt`
-       into an in-memory set for fast membership checks. (file:
-       `crawler/frontier/dedup_file.py`)
-     - `RobotsCache` / `RobotsCache` created to cache robots.txt verdicts.
-     - `UrlPolicy` wraps config scope rules and robots checks.
-     - `CrawlerFetcher` is created for HTTP fetching (httpx client with
-       timeouts, retries, and rate limiting). (file: `crawler/net/fetcher.py`)
-     - `DiscoveriesWriter` opens the spool output directory for appends.
-
-2. Seeding
-   - Seeds (from file or defaults) are canonicalized and added to the
-     frontier via `FileFrontier.add(url, depth=0, ...)` if not already seen
-     (`DedupStore.is_seen`) and not already in the frontier (`Frontier.contains`).
-
-3. Main loop (pop → process)
-   - `CrawlerService.run()` repeatedly:
-     - Calls `frontier.pop()` which returns the next URL according to BFS
-       ordering (lowest `depth`, then `score`, then discovery time).
-     - Before each fetch the service ensures rate control by sleeping briefly
-       based on `limits.req_per_sec` (the fetcher also enforces its own rate
-       limiter).
-
-4. Policy check and robots
-   - For each popped URL, `UrlPolicy.gate(url)` and `UrlPolicy.classify(url)` are
-     used to determine `page_type` and whether the URL is allowed. The policy
-     consults the robots cache via `RobotsCache` (file-backed `robots_cache.jsonl`) —
-     if robots disallows the path, the URL is not fetched or enqueued.
-
-5. Fetch
-   - `CrawlerFetcher.fetch(url)` performs the HTTP request with:
-     - Headers: `User-Agent` (from config), `Accept`, `Accept-Language`,
-       `Accept-Encoding`, and `Connection: keep-alive`.
-     - Timeouts from config (`connect_timeout_ms`, `read_timeout_ms`).
-     - Retries and exponential backoff: `max_retries`, `backoff_base_ms` and
-       `backoff_cap_ms`. 429 responses consult `Retry-After` header when present.
-     - Rate limiting via an internal _last_request_time lock (min interval = 1/req_per_sec).
-   - Return values: success flag, HTML text (string) and a metadata dict
-     containing `status_code`, `content_type`, `content_length`, `latency_ms`.
-
-6. Link extraction and child enqueueing
-   - On successful fetch (HTTP 200): `LinkExtractor.extract(html, url)` is
-     used to extract links. Each child link is canonicalized then passed to
-     `_enqueue_url(link, referrer, child_depth)` where the following happen:
-     - Check `DedupStore.is_seen()` to avoid re-adding fetched URLs.
-     - Check `UrlPolicy.gate()` for allow/deny.
-     - Check per-repo caps in `_check_caps()` (e.g., `per_repo_max_pages`).
-     - If passes, `FileFrontier.add()` is called with depth and page_type,
-       and `DedupStore.mark_seen()` marks it in-memory and appends to
-       `fetched_urls.txt` when actually fetched later.
-
-7. Emit discovery
-   - The crawler writes a discovery JSON object describing the fetched page to
-     the spool via `DiscoveriesWriter.write(item)`. Typical fields include:
-     `url`, `page_type`, `depth`, `referrer`, and `metadata` with basic
-     fetch timing and length info. Files are placed under
-     `workspace/spool/discoveries/discoveries-<ts>.jsonl`.
-
-8. Periodic persistence & shutdown
-   - `FileFrontier.persist()` periodically rewrites the frontier JSONL file
-     (atomic temp file replace) so the crawler can resume later. On shutdown
-     components close and files are flushed.
-
-
-### B. Scraper (consumer) — processing pipeline (high level)
-
-Purpose: tail the discovery spool, fetch and store HTML content, update the
-page index for conditional requests, and append rows to the pages CSV for
-downstream use. Key code: `scraper/run.py`, `scraper/io/spool.py`,
-`scraper/net/fetcher.py`, `scraper/io/storage.py`, `scraper/index/page_index.py`,
-`scraper/io/csv_writer.py`.
-
-Steps (strict sequence):
-
-1. Initialization
-   - `ScraperService.setup()` initializes components:
-     - `SpoolReader(dir=self.config.spool.dir, bookmark_path=self.config.bookmark.path)`
-       loads or creates `workspace/state/spool_bookmark.json` and opens ability to
-       iterate discoveries with offsets retained. (file: `scraper/io/spool.py`)
-     - `HtmlStore(root, compress, permissions)` mounts `workspace/store/html/`.
-     - `PagesCsv(path)` opens pages CSV for append-only writes.
-     - `PageIndex(db_path)` loads an append-only JSONL index from
-       `workspace/index/...` into memory for conditional requests (ETag/Last-Modified support).
-     - `Fetcher(config, proxy_client, limiter)` creates the HTTP client with
-       `httpx.AsyncClient`, proxy support, and the scraper `RateLimiter` (per-host and global).
-
-2. Spool tailing & bookmark
-   - The scraper calls `SpoolReader.iter_items()` which:
-     - Loads `workspace/state/spool_bookmark.json` (if present) to find the
-       starting file and byte offset.
-     - Lists `discoveries-*.jsonl` files in `workspace/spool/discoveries/` and
-       opens the current file, seeking to the saved offset.
-     - Yields parsed JSON objects line-by-line. After each yielded item it
-       updates `state.file` and `state.offset` and periodically saves the
-       bookmark atomically (temp file + replace).
-   - This design ensures the scraper can be stopped and resumed without
-     losing or reprocessing large amounts of the spool.
-
-3. Item processing loop
-   - For each discovery item, `ScraperService.process_item(item)` executes:
-     - Validate `url` exists; read `page_type`, `depth`, `referrer`.
-     - Check control flags via `ControlFlags.wait_while_paused()` and
-       `ControlFlags.check_stop()` — these watch for `pause.scraper` and
-       `stop.scraper` files in the workspace; when `pause.scraper` is present,
-       the loop sleeps until it's removed.
-     - Backpressure check: if spool directory size exceeds `spool.max_backlog_gb`
-       scraper pauses consumption for 10s (configurable) before resuming.
-
-4. Conditional request (index lookup)
-   - `page_index.get(url)` is consulted to find previous metadata (ETag,
-     Last-Modified, stored path, sha256). If present, these values are used
-     to perform a conditional request (headers `If-None-Match` and/or
-     `If-Modified-Since`) so the scraper avoids re-downloading unchanged content.
-
-5. Fetch
-   - `Fetcher.fetch_html(url, prev)` performs the HTTP request with:
-     - `httpx.AsyncClient` with HTTP/2 enabled, timeouts and connection limits.
-     - Base headers include `User-Agent`, `Accept`, `Accept-Language`,
-       `Accept-Encoding`, and cache-control headers.
-     - If `prev` exists, it injects conditional headers: `If-None-Match` and
-       `If-Modified-Since`.
-     - Proxy selection: `ProxyClient.pick()` may be used to route requests.
-     - Rate limiting: the `RateLimiter` object controls per-host concurrency and
-       overall throughput (via async context manager `.acquire(host)`).
-     - Retries with exponential backoff and jitter. For 429/Retry-After the
-       implementation respects `Retry-After` if present; otherwise it uses
-       exponential backoff with jitter derived from config (`backoff_base_ms`,
-       `backoff_cap_ms`).
-   - Fetcher returns a result dict with keys: `ok`, `status`, `html_bytes`,
-     `headers`, `latency_ms`, `proxy_id`, `retries`, `not_modified` (for 304)
-     and `not_html` for non-HTML responses.
-
-6. 304 Not Modified handling
-   - If `status == 304` (fetcher returns `not_modified` True):
-     - The scraper uses previous index metadata (sha256, stored_path) without
-       storing a new copy.
-     - A CSV row is emitted that references the cached stored_path and
-       appropriate headers; metrics are incremented for `304`.
-
-7. Storing new content
-   - If new content is returned (`status == 200` and content-type is HTML):
-     - `HtmlStore.save(html_bytes)` computes SHA-256 and stores the bytes in
-       `workspace/store/html/aa/bb/<sha>.html`, optionally compressed as
-       `.html.zst` when zstandard is enabled. Writes are atomic via temp files
-       then `os.replace` (or `Path.replace`), and file permissions are set
-       from config.
-     - `HtmlStore.save()` returns `sha256`, `stored_path`, size bytes and a
-       flag if it already existed (de-dup by content hash).
-
-8. Update index
-   - `PageIndex.put(index_record)` writes an append-only JSONL record into the
-     page index and updates the in-memory map. Records include `url`, `sha256`,
-     `stored_path`, `etag`, `last_modified`, `timestamp`. The index periodically
-     compacts into a single rewrite when writes exceed `_COMPACT_THRESHOLD`.
-
-9. Write pages CSV and metrics
-   - The scraper builds a CSV row with fields such as: `timestamp, url,
-     page_type, depth, referrer, http_status, content_type, encoding,
-     content_sha256, content_bytes, stored_path, etag, last_modified,
-     fetch_latency_ms, retries, proxy_id, metadata` and appends it via
-     `PagesCsv.append(row)`.
-   - Metrics (counters and periodic CSV) are updated by `Metrics` and flushed
-     based on `flush_interval_sec`.
-
-10. Periodic flush, cleanup & replay
-    - The scraper flushes bookmark periodically. On shutdown it calls
-      `spool_reader._save_bookmark(force=True)` to persist progress.
-    - In replay mode (`ScraperService.replay()`), the scraper iterates
-      `PageIndex.iterate()` and rebuilds the pages CSV from stored HTML without
-      performing network requests.
-
-
-### C. Unified crawler (single-process) — combined pipeline (high level)
-
-Purpose: perform fetch, store and extract in a single flow. Key code:
-`crawler/run_unified.py`, `crawler/net/unified_fetcher.py`,
-`crawler/io/metadata_writer.py`.
-
-Steps (strict sequence):
-
-1. Initialization
-   - `UnifiedCrawlerService.start()` initializes `FileFrontier`, `FileDedupStore`,
-     `FileRobotsCache`, `UrlPolicy`, `UnifiedFetcher`, `LinkExtractor`, and
-     `UnifiedMetadataWriter` (writes to `workspace/metadata/crawl_metadata.jsonl`).
-
-2. Seed and frontier
-   - Seeds are added to frontier (same as separated mode) and dedup is checked
-     to avoid re-fetching already-processed URLs on resume.
-
-3. Main loop (pop → unified process)
-   - For each popped URL the unified crawler:
-     - Uses `UrlPolicy` and `FileRobotsCache` to gate the URL.
-     - Calls `UnifiedFetcher.fetch_and_store(url)` which:
-       - Performs the HTTP request using `httpx` (time-outs, retries, 429
-         handling, and rate limiting similar to the separate fetcher).
-       - On HTTP 200 it computes SHA-256 of the content and writes the HTML to
-         `workspace/store/html/aa/bb/<sha>.html` (optionally compressed). The
-         storage uses atomic temp-file writes and sets file permissions.
-       - Returns a result dict containing `ok`, `status`, `content_sha256`,
-         `stored_path`, `content_bytes`, `content_type`, `encoding`, `etag`,
-         `last_modified`, `fetch_latency_ms`, `retries`, and the `html` bytes
-         (decoded) for link extraction.
-     - The unified service marks the URL as fetched in the dedup store
-       (`FileDedupStore.mark_fetched(url)`), and writes unified metadata via
-       `UnifiedMetadataWriter.build_record(...); write(record)`.
-     - Link extraction: `LinkExtractor.extract(html, url)` returns child links
-       which are canonicalized and enqueued back into `FileFrontier` subject
-       to `UrlPolicy` and per-repo caps.
-
-4. Benefits & trade-offs
-   - Unified mode eliminates the round-trip of writing and reading spool files
-     and avoids double-fetching when the crawler and scraper run separately.
-   - Because it stores metadata and content in the same run, replay and
-     downstream tooling can be simpler. The unified writer produces
-     `crawl_metadata.jsonl` compatible with existing CSV outputs.
-
-
-## Edge cases, failure modes and observations
-
-- Network failures: both fetchers apply exponential backoff with jitter and
-  will escalate to failure after `max_retries`. 429 (rate limiting) is
-  handled specially by honoring `Retry-After` when present.
-- Partial writes: all on-disk writes use atomic temp-file + replace semantics
-  to avoid corrupt partial files (`HtmlStore.save()`, `FileFrontier.persist()`,
-  `PageIndex` compaction, spool/bookmark saves).
-- Deduplication is conservative: the crawler marks seeds/queued URLs in the
-  seen/dedup store; the scraper also uses the `PageIndex` and `HtmlStore` to
-  avoid re-downloading duplicate content (via ETag/304 and content-addressing).
-- Backpressure: the scraper will pause consumption if the spool grows beyond
-  `spool.max_backlog_gb`, and Manager-style control files (`pause.scraper`,
-  `stop.scraper`) allow external orchestration to pause/stop processing.
-
-## Closing note
-
-This appended section describes precisely what the code does, where it writes
-data, and how behavior (timeouts, retries, storage paths, caps) is controlled
-by configuration. If you'd like, I can now:
-
-- Extract and append the exact JSON schema for a discovery item and for a
-  unified metadata record (taking field names directly from call sites).
-- Produce a mermaid sequence diagram that includes conditional-304 branches
-  explicitly and a UML class-like diagram for the JSON shapes.
-- Add a small smoke test harness that writes a sample `discoveries-*.jsonl`
-  and runs the scraper in replay mode to validate CSV and index outputs.
-
-Tell me which of those follow-ups you prefer and I'll implement it next.
-
-## Detailed UML Sequence Diagrams (mermaid)
-
-Below are two comprehensive mermaid sequence diagrams that encode the full
-step-by-step behavior described above. They include initialization, policy
-checks, all fetch response branches (200, 304, 4xx, 429 & backoff, network
-errors), storage, index updates, CSV writes, spool/bookmark handling,
-control flags, backpressure and retry loops. Use a mermaid renderer that
-supports `alt`, `opt` and `loop` sections for best readability.
-
-### 1) Separated pipeline — Crawler (producer) -> Spool -> Scraper (consumer)
-
-```mermaid
-sequenceDiagram
-  %% Participants
-  participant C as CrawlerService
-  participant F as FileFrontier
-  participant D as FileDedupStore
-  participant P as UrlPolicy
-  participant R as RobotsCache
-  participant CF as CrawlerFetcher
-  participant W as DiscoveriesWriter
-  participant FS as FilesystemSpool
-
-  participant S as ScraperService
-  participant SR as SpoolReader
-  participant IDX as PageIndex
-  participant SF as Fetcher (scraper)
-  participant RL as RateLimiter
-  participant PC as ProxyClient
-  participant HS as HtmlStore
-  participant CSV as PagesCsv
-  participant MET as Metrics
-  participant CFg as ControlFlags
-  participant BK as Bookmark (spool_bookmark.json)
-
-  %% Crawler initialization and seed
-  Note over C,F,D,P,R,CF,W: CrawlerService.start() initializes components
-  C->>F: instantiate FileFrontier(load frontier JSONL)
-  C->>D: instantiate FileDedupStore(load fetched_urls.txt)
-  C->>R: instantiate RobotsCache(load robots_cache.jsonl)
-  C->>P: instantiate UrlPolicy(config.scope + robots)
-  C->>CF: instantiate CrawlerFetcher(config: UA, timeouts, backoff)
-  C->>W: open DiscoveriesWriter(spool dir)
-
-  Note over C: seed URLs added
-  C->>F: add(seed1..seedN)
-
-  loop crawler main loop
-    C->>F: pop() => url
-    alt no url
-      F-->>C: None (sleep & retry)
-    else has url
-      C->>D: is_fetched?(url)
-      alt already fetched
-        D-->>C: true (skip)
-      else not fetched
-        D-->>C: false
-        C->>P: classify/gate(url)
-        P->>R: consult robots (maybe fetch robots.txt)
-        R-->>P: robots verdict
-        alt robots denies
-          P-->>C: deny (increment policy_denied)
-        else robots allows
-          P-->>C: allow + page_type
-          C->>CF: fetch(url) [headers: UA, Accept, Accept-Language, Accept-Encoding]
-          loop retries up to max_retries
-            CF->>CF: apply rate-limit (1/req_per_sec)
-            CF->>CF: perform HTTP GET
-            alt HTTP 200
-              CF-->>C: (ok, html, metadata)
-              break
-            else HTTP 404/403
-              CF-->>C: (fail, status)
-              break
-            else HTTP 429
-              CF-->>C: (429)
-              CF->>CF: sleep Retry-After or backoff
-              continue
-            else network/timeout
-              CF-->>C: (err)
-              CF->>CF: sleep backoff
-              continue
-            end
-          end
-          alt fetch ok
-            C->>C: LinkExtractor.extract(html)
-            C->>F: for each child -> enqueue (policy/dedup/caps checked)
-            C->>W: write discovery JSONL (url, page_type, depth, metadata)
-            W-->>FS: append file discoveries-...jsonl
-          else fetch failed
-            C-->>MET: increment fetch_fail
+  loop Crawl Loop
+    Service->>Frontier: `pop()` next URL
+    alt Frontier empty
+      Service->>Service: `asyncio.sleep(5)` and recheck
+    else URL available
+      Service->>Policy: `classify(url)`
+      Service->>Fetcher: `fetch_and_store(url)`
+      alt Fetch succeeded
+        Fetcher->>HTML: Write content-addressed HTML file
+        Fetcher-->>Service: Return metadata + HTML string
+        Service->>Fetched: Append canonical URL
+        Service->>Metadata: Write success record
+        Service->>Extractor: `extract(html, url)`
+        Extractor-->>Service: Discovered links
+        loop Discovered links
+          Service->>Policy: `gate(link)`
+          alt Allowed
+            Policy->>Robots: Update/read cache entry if needed
+            Service->>Frontier: `add(link, depth+1)`
+          else Denied
+            Service->>Service: Increment policy_denied stat
           end
         end
+      else Fetch failed
+        Fetcher-->>Service: Return error details
+        Service->>Fetched: Append canonical URL
+        Service->>Metadata: Write failure record with error
       end
     end
-  end
-
-  Note over FS,SR: Spool files available on disk
-
-  %% Scraper side: spool reader loop
-  S->>SR: iter_items() (load bookmark from BK)
-  SR->>BK: read bookmark {file,offset}
-  loop spool tail
-    SR->>FS: open current discoveries file at offset
-    SR-->>S: yield discovery item (json)
-    S->>CFg: wait_while_paused() / check_stop()
-    alt stop requested
-      CFg-->>S: stop -> exit loop
-    else continue
-      S->>MET: check spool size -> if > max_backlog_gb pause consumption
-      alt backpressure
-        S-->>MET: sleep 10s and continue
-      end
-      S->>IDX: get(url)
-      IDX-->>S: prev (etag,last_modified,sha,stored_path) or None
-      S->>PC: pick proxy (optional)
-      S->>RL: acquire(host)
-      S->>SF: fetch_html(url, prev) [If-None-Match/If-Modified-Since if prev]
-      loop fetch retries
-        SF->>SF: httpx AsyncClient.get(headers + conditional)
-        alt 200 OK
-          SF-->>S: ok, headers, html_bytes, latency
-          break
-        else 304 Not Modified
-          SF-->>S: not_modified (304)
-          break
-        else 429 / Retry-After
-          SF-->>S: throttled -> wait Retry-After or backoff -> retry
-        else network/error
-          SF-->>S: error -> backoff -> retry or fail
-        end
-      end
-      alt 304 Not Modified
-        S->>IDX: use prev.sha & prev.stored_path
-        S->>CSV: append(row referencing prev.stored_path, prev.sha)
-        S->>MET: inc(not_modified_304)
-      else 200 OK
-        S->>HS: save(html_bytes)
-        opt content already exists
-          HS-->>S: already_exists=True (dedup by content)
-        end
-        HS-->>S: stored_path, sha256, bytes
-        S->>IDX: put({url,sha256,stored_path,etag,last_modified,timestamp})
-        S->>CSV: append(row with stored_path, sha256, bytes, headers,...)
-        S->>MET: inc(pages_saved, bytes_saved)
-      else non-HTML or failed
-        SF-->>S: not_html or fail -> metrics/inc and continue
-      end
-      S->>BK: update bookmark (file,offset) and _save_bookmark() periodically
+    Service->>Service: Sample per-request sleep (SleepConfig)
+    Service->>Service: Await sampled delay
+    opt Batch threshold reached
+      Service->>Service: Sample batch pause (SleepConfig)
+      Service->>Service: Await batch delay
     end
+    Service->>FrontierFile: Periodic `persist()` (>=60s)
   end
 
-  Note over S,BK: on shutdown SR._save_bookmark(force=True) is called
+  CLI->>Service: `stop()` or KeyboardInterrupt
+  Service->>Frontier: `close()` (flush queue)
+  Service->>Policy: `close()` (persist robots cache)
+  Service->>Fetcher: `close()` (shutdown httpx client)
+  Service->>Metadata: `close()` (flush JSONL)
 ```
 
-### 2) Unified pipeline — single-process fetch+store+extract
+## Detailed Crawl & Scrape Pipeline
+1. **Launch & Configuration**
+  - `main.py` starts with `argparse` to read `--config` and `--seeds`, then loads YAML via `CrawlerScraperConfig.from_yaml`, instantiating nested data classes for scope, limits, caps, storage, robots, and logging behavior.
+  - The script configures `logging` using the level from the config file, prints a run summary, and reads seed URLs with `load_seeds`, trimming blanks and comments.
+  - `asyncio.run(run_crawler(...))` transfers control to the asynchronous world, keeping the pipeline single-process but non-blocking for network I/O.
 
-```mermaid
-sequenceDiagram
-  participant U as UnifiedCrawlerService
-  participant F as FileFrontier
-  participant D as FileDedupStore
-  participant P as UrlPolicy
-  participant R as FileRobotsCache
-  participant UF as UnifiedFetcher
-  participant MD as UnifiedMetadataWriter
-  participant EX as LinkExtractor
-  participant HS as HtmlStore (same layout)
+2. **Workspace Preparation & Component Wiring**
+  - Inside `CrawlerScraperService.start`, the workspace path from the config is resolved relative to the current process and the service ensures `workspace/state`, `workspace/metadata`, and `workspace/store/html` directories exist.
+  - `CrawlFrontier` is created with pointers to `workspace/state/frontier.jsonl` and `workspace/state/fetched_urls.txt`, loading any prior queue/deduplication data to support resuming runs.
+  - `CrawlPolicy` receives allow/deny patterns, host lists, and robots settings; it loads or creates `workspace/state/robots_cache.jsonl` so robots decisions persist between runs.
+  - `UnifiedFetcher` is constructed with HTTP timeouts, retry/backoff configuration, rate limits, and the HTML store root. It uses `httpx.AsyncClient` (HTTP/2 capable) to issue requests and enforces polite crawling with an `asyncio.Lock`-backed rate limiter.
+  - `LinkExtractor` (regex-powered) and `UnifiedMetadataWriter` (append-only JSONL writer) are instantiated. The metadata writer ensures `workspace/metadata/crawl_metadata.jsonl` is opened in line-buffered append mode.
 
-  Note over U,F,D,R,UF,MD,EX: UnifiedCrawlerService.start() initializes components
-  U->>F: pop() => url
-  F-->>U: url
-  U->>D: is_fetched?(url)
-  alt already fetched
-    D-->>U: true -> skip
-  else not fetched
-    D-->>U: false
-    U->>P: classify(url)
-    P->>R: consult (robots)
-    R-->>P: allowed
-    alt denied
-      P-->>U: deny -> continue
-    else allowed
-      U->>UF: fetch_and_store(url)
-      loop fetch & store internals
-        UF->>UF: rate-limit & perform HTTP GET
-        alt 200 OK
-          UF->>UF: compute sha256(html_bytes)
-          UF->>HS: save(html_bytes) -> stored_path
-          UF-->>U: ok + {stored_path, sha256, bytes, headers, latency}
-          break
-        else 429 -> backoff
-          UF-->>UF: sleep then retry
-        else error -> backoff or fail
-          UF-->>U: fail
-        end
-      end
-      alt fetch_and_store ok
-        U->>D: mark_fetched(url)
-        U->>MD: build_record(url, depth, page_type, referrer, status, sha256, stored_path, bytes, headers, latency,...)
-        MD-->>U: record written
-        U->>EX: extract(html)
-        EX-->>U: links[]
-        loop for link in links
-          U->>P: gate(link)
-          alt allowed
-            U->>F: add(link)  (depth tracking)
-          else denied
-            note right of U: skip link
-          end
-        end
-      else fail
-        U-->>MET: increment fetch_errors
-      end
-    end
-  end
+3. **Seed Ingestion & Initial Persistence**
+  - Each seed URL is canonicalized through `crawler.url_tools.canonicalize`, stripping fragments, normalizing casing, and pruning query strings to match deduplication semantics.
+  - The service skips seeds already marked in `fetched_urls.txt` and avoids duplicates in the in-memory queue set before calling `frontier.add(...)` with depth `0` and page type `seed`.
+  - `CrawlFrontier.persist()` writes the initial queue snapshot to `frontier.jsonl`, giving the pipeline a durable starting point.
 
-  Note over U,MD: Unified metadata contains combined crawl + fetch fields
-```
+4. **Frontier-Driven Event Loop**
+  - `CrawlerScraperService.run` enters an `async` loop: when the frontier is empty the service sleeps for five seconds and re-checks, exiting when the queue remains empty.
+  - The frontier provides breadth-first traversal by storing `FrontierItem` instances ordered by `(depth, score, discovered_at)`; `score` defaults to the depth, preserving BFS semantics even as depths grow.
 
-If you want the diagrams split further (for example, separate the fetcher's
-internal retry/backoff loop into its own diagram or visually show the
-RateLimiter/host-acquire interactions), I can generate those additional
-sub-diagrams. Tell me which visual layout you prefer (single giant diagram,
-split per-component, or a condensed overview) and I'll update accordingly.
+5. **URL Preparation & Classification**
+  - `_process_url` retrieves the stored depth and referrer for context, then asks `CrawlPolicy.classify` to label the URL (e.g., `repo_root`, `issues`, `pull`, `blob`).
+  - The method double-checks deduplication via `frontier.is_fetched`; already-processed URLs increment `stats["already_fetched"]` and exit early.
 
+6. **Fetch Stage (Scrape Start)**
+  - `UnifiedFetcher.fetch_and_store` enforces the configured request rate by awaiting `_wait_for_rate_limit`, which serializes calls via an `asyncio.Lock` and sleep-based pacing.
+  - It builds HTTP headers (user agent, Accept, Accept-Language, Accept-Encoding) and performs the request with `httpx.AsyncClient.get`, benefiting from HTTP/2 multiplexing and automatic redirect handling (up to five hops).
+  - Response handling covers success (`200`), client errors (`404`, `403`, `410`), server errors, and throttling (`429`). Retries back off exponentially (`backoff_base_ms`, `backoff_cap_ms`), optionally honoring `Retry-After` headers. Failures populate `stats["fetch_errors"]`.
 
+7. **HTML Storage & Deduplication**
+  - On success, the fetcher computes a SHA-256 digest of the raw bytes and writes the payload to `workspace/store/html/aa/bb/<sha>.html` (where `aa`/`bb` are prefix directories). Files are written atomically through a temporary file and `Path.replace`, with permissions set per config.
+  - Optional compression leverages the `zstandard` Python package when available (`compress=True`), appending `.html.zst` files; the current configuration disables compression but the code path is ready.
+  - The fetcher returns a dict containing latency, retries, headers (`content-type`, `encoding`, `etag`, `last-modified`), byte length, the storage path, and UTF-8-decoded HTML for downstream parsing.
+
+8. **Metadata Recording**
+  - `frontier.mark_fetched(url)` appends the canonical URL to `fetched_urls.txt`, ensuring future runs treat it as processed.
+  - Whether the fetch succeeded or failed, `_process_url` composes a record via `UnifiedMetadataWriter.build_record`, capturing depth, page type, referrer, HTTP status, storage path, content hash, and timing information.
+  - `UnifiedMetadataWriter.write` serializes the dict to JSON and appends it as a line to `workspace/metadata/crawl_metadata.jsonl`, producing an immutable event log suitable for analytics or replay.
+
+9. **Link Extraction & Normalization**
+  - Successful fetches pass the HTML string to `LinkExtractor.extract`, which applies an anchor-tag regex to capture `href` values, unescapes entities, resolves relative anchors using `urllib.parse.urljoin`, filters unsupported schemes (mailto, tel, javascript), removes fragments, and preserves discovery order while deduplicating.
+  - The number of found links increments `stats["links_extracted"]`, giving visibility into crawl expansion.
+
+10. **Politeness Sleeps**
+  - After every processed URL the service samples a per-request sleep within the configured range and awaits before continuing, slowing the crawl in a human-like manner.
+  - Counters track processed requests; once the batch size threshold is reached, the service samples a longer batch pause and awaits before resuming the frontier loop.
+
+11. **Policy Gate & Child Enqueueing**
+  - `_enqueue_url` canonicalizes each discovered link and checks for self-references or prior visits before asking `CrawlPolicy.gate` for a decision.
+  - The policy enforces host allowlist (`github.com`), denies listed subdomains, applies regex allow/deny filters, and evaluates robots.txt. Robots responses are cached per domain with TTL, stored in `workspace/state/robots_cache.jsonl`.
+  - Allowed URLs may be replaced by a policy-supplied canonical form (e.g., normalization). If the canonical differs, the service re-runs deduplication checks to avoid duplicates.
+  - `_check_caps` uses `url_tools.extract_repo_info` to attribute URLs to repositories and enforce per-repo limits for general pages, issues, and pull requests, driven by the `caps` section of the configuration.
+  - Passing URLs enter the frontier via `frontier.add`, with depth incremented by one and score set to the depth for BFS ordering. Referrer relationships and depths are cached in `_url_referrer` and `_url_depth` for future metadata use.
+
+12. **Persistence & Periodic Maintenance**
+  - After every processed URL, statistics counters in `self.stats` capture operational metrics. Every 60 seconds the service triggers `frontier.persist()` to rewrite `frontier.jsonl`, minimizing loss on interruption.
+  - `CrawlFrontier.compact` is available to remove fetched items from disk representations; while not invoked automatically, it supports manual maintenance.
+
+13. **Error Handling & Shutdown**
+  - Exceptions during fetching or processing are caught, logged, and reflected in metadata with an `extra_metadata` payload describing the error.
+  - `KeyboardInterrupt` is caught in `main.py`, prompting `service.stop()` to cancel the loop, close the frontier (persisting queue and closing `fetched_urls.txt`), flush the robots cache, close the HTTP client, and close the metadata file. Final statistics are printed to the log.
+
+14. **Technologies Involved**
+  - The `asyncio` toolkit orchestrates the event loop and concurrency model.
+  - The `httpx` library provides async HTTP/2 client capabilities with timeouts, redirects, and retry support.
+  - Regular expressions combined with `urllib.parse` handle HTML link extraction and normalization.
+  - The `pathlib` and `json` standard modules implement file-based persistence (JSONL for queues/metadata, plain text for deduplication sets).
+  - The `hashlib` module supports SHA-256 hashing for content-addressed storage; the optional `zstandard` package enables compression.
+  - Standard-library modules (`argparse`, `logging`, `collections.defaultdict`, `urllib.parse`) fill configuration, diagnostics, and URL normalization responsibilities.
+
+15. **Data Artifacts Produced**
+   - `workspace/state/frontier.jsonl`: serialized queue records (`FrontierItem`) with depth, score, and timestamps.
+   - `workspace/state/fetched_urls.txt`: newline-separated canonical URLs guaranteeing idempotent processing.
+   - `workspace/state/robots_cache.jsonl`: robots cache entries with fetch/expiry metadata for host compliance.
+   - `workspace/store/html/aa/bb/<sha>.html`: raw HTML snapshots addressed by SHA-256 digest, ready for downstream parsing.
+   - `workspace/metadata/crawl_metadata.jsonl`: append-only ledger combining crawl context, fetch results, storage fingerprints, and error annotations.
+
+16. **End-to-End Summary**
+   - The crawler begins with deterministic seeds, applies canonicalization and policy gates to maintain a GitHub-focused scope, fetches pages politely under rate limits, and writes each step's outcome to durable files.
+  - Scraping is intrinsic to the fetch stage: raw HTML is captured, metadata is recorded, discovered links feed back into the frontier, and newly added per-request/batch sleeps smooth crawl pacing while preserving the pipeline's resumable state.

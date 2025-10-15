@@ -9,15 +9,6 @@ pyyaml>=6.0
 # HTML parsing for link extraction
 beautifulsoup4>=4.12.0
 
-# Fast HTML parsing with CSS selectors
-selectolax>=0.3.21
-
-# LMDB for persistent frontier
-lmdb>=1.4.1
-
-# MurmurHash for Bloom filter
-mmh3>=4.1.0
-
 # Note: reppy has build issues on Python 3.13, using urllib.robotparser instead
 
 # Optional: Memory-mapped Bloom filter (more efficient than our basic implementation)
