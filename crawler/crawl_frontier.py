@@ -1,8 +1,10 @@
 import json
 import logging
 import time
+import hashlib
+import shutil
 from pathlib import Path
-from typing import Optional, List, Dict, Any, Set
+from typing import Optional, Iterable
 from dataclasses import dataclass, asdict
 
 logger = logging.getLogger(__name__)
@@ -27,65 +29,83 @@ class CrawlFrontier:
     def __init__(self, frontier_path: str, fetched_urls_path: str):
         self.frontier_path = Path(frontier_path)
         self.frontier_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Dedup setup
+        self.frontier_path.touch(exist_ok=True)
+
         self.fetched_urls_path = Path(fetched_urls_path)
         self.fetched_urls_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # In-memory queue for performance (frontier)
-        self._queue: List[FrontierItem] = []
-        self._queue_set: set = set()  # URLs in queue for fast lookup
-        
-        # In-memory set for deduplication (fetched URLs)
-        self._fetched: Set[str] = set()
-        
-        # File handle for append-only fetched URLs
+        self.fetched_urls_path.touch(exist_ok=True)
+
+        # Index directories for queue membership and fetched deduplication
+        self._queue_index_dir = self.frontier_path.parent / f"{self.frontier_path.stem}_index"
+        self._fetched_index_dir = self.fetched_urls_path.parent / f"{self.fetched_urls_path.stem}_index"
+        self._queue_index_dir.mkdir(parents=True, exist_ok=True)
+        self._fetched_index_dir.mkdir(parents=True, exist_ok=True)
+
+        # Persistent metadata files
+        self._cursor_path = self.frontier_path.with_suffix('.cursor')
+        self._stats_path = self.frontier_path.with_suffix('.stats.json')
+
+        # File handles
+        self._queue_reader = None
+        self._queue_writer = None
         self._fetched_file_handle = None
-        
-        # Load existing data
-        self._load_fetched_urls()
-        self._load_frontier()
-        self._open_fetched_for_append()
-        
-        # Statistics
+
+        # Counters
+        self._queue_size = 0
+        self._fetched_count = 0
+        self._read_position = 0
         self.urls_added = 0
         self.urls_popped = 0
-        
+
+        # Load persisted stats (best effort)
+        self._load_stats()
+
+        # Initialize registries
+        self._initialize_fetched_registry()
+        self._open_fetched_for_append()
+        self._initialize_queue_registry()
+
+        # Restore cursor and open queue files
+        self._read_position = self._load_cursor()
+        self._open_queue_files()
+
         logger.info(
-            f"Crawl frontier initialized: "
-            f"{len(self._queue)} URLs in queue, "
-            f"{len(self._fetched)} URLs fetched"
+            "Crawl frontier initialized: %d pending URLs, %d fetched URLs",
+            self._queue_size,
+            self._fetched_count,
         )
     
     # =========================================================================
     # Deduplication (Fetched URLs Management)
     # =========================================================================
     
-    def _load_fetched_urls(self):
-        """Load fetched URLs from disk into memory."""
-        if not self.fetched_urls_path.exists():
-            logger.info("No existing fetched_urls file found - starting fresh")
-            # Create empty file
-            self.fetched_urls_path.touch()
-            return
-        
+    def _initialize_fetched_registry(self) -> None:
+        """Populate on-disk fetched URL index and count entries."""
+        count = 0
+        if self._fetched_index_dir.exists():
+            shutil.rmtree(self._fetched_index_dir)
+        self._fetched_index_dir.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.fetched_urls_path, 'r') as f:
-                for line in f:
+            with self.fetched_urls_path.open('r', encoding='utf-8') as handle:
+                for line in handle:
                     url = line.strip()
-                    if url:
-                        self._fetched.add(url)
-            
-            logger.info(f"Loaded {len(self._fetched)} fetched URLs")
-            
-        except Exception as e:
-            logger.error(f"Failed to load fetched URLs: {e}")
-            self._fetched = set()
+                    if not url:
+                        continue
+                    if self._ensure_index_marker(self._fetched_index_dir, url):
+                        count += 1
+        except FileNotFoundError:
+            # File was just created; nothing to index yet
+            self._fetched_count = 0
+        except Exception as exc:
+            logger.error("Failed to initialize fetched registry: %s", exc)
+            self._fetched_count = 0
+        else:
+            self._fetched_count = count
     
     def _open_fetched_for_append(self):
         """Open fetched_urls file for append-only writes."""
         try:
-            self._fetched_file_handle = open(self.fetched_urls_path, 'a', buffering=1)  # Line buffered
+            self._fetched_file_handle = self.fetched_urls_path.open('a', encoding='utf-8', buffering=1)
         except Exception as e:
             logger.error(f"Failed to open fetched_urls file for append: {e}")
             self._fetched_file_handle = None
@@ -99,7 +119,7 @@ class CrawlFrontier:
         Returns:
             True if URL was already fetched
         """
-        return url in self._fetched
+        return self._index_exists(self._fetched_index_dir, url)
     
     def mark_fetched(self, url: str):
         """Mark URL as fetched.
@@ -107,13 +127,20 @@ class CrawlFrontier:
         Args:
             url: URL to mark
         """
-        if url in self._fetched:
+        if self._index_exists(self._fetched_index_dir, url):
             return
         
-        # Add to in-memory set
-        self._fetched.add(url)
+        if self._remove_index_marker(self._queue_index_dir, url):
+            self._queue_size = max(0, self._queue_size - 1)
+        marker_created = self._ensure_index_marker(self._fetched_index_dir, url)
+        if marker_created:
+            self._fetched_count += 1
+        else:
+            return
         
         # Append to file
+        if self._fetched_file_handle is None:
+            self._open_fetched_for_append()
         if self._fetched_file_handle:
             try:
                 self._fetched_file_handle.write(url + '\n')
@@ -121,55 +148,69 @@ class CrawlFrontier:
             except Exception as e:
                 logger.error(f"Failed to write URL to fetched_urls: {e}")
     
-    def get_all_fetched(self) -> Set[str]:
-        """Get set of all fetched URLs.
-        
+    def get_all_fetched(self) -> Iterable[str]:
+        """Stream fetched URLs from disk.
+
         Returns:
-            Set of fetched URLs
+            Iterable over fetched URLs (consumers should iterate to avoid loading into memory).
         """
-        return self._fetched.copy()
+        try:
+            with self.fetched_urls_path.open('r', encoding='utf-8') as handle:
+                for line in handle:
+                    url = line.strip()
+                    if url:
+                        yield url
+        except FileNotFoundError:
+            return
     
     def fetched_count(self) -> int:
         """Get number of fetched URLs."""
-        return len(self._fetched)
+        return self._fetched_count
     
     # =========================================================================
     # Frontier Queue Management
     # =========================================================================
     
-    def _load_frontier(self):
-        """Load frontier from disk into memory."""
-        if not self.frontier_path.exists():
-            logger.info("No existing frontier file found - starting fresh")
-            return
-        
+    def _initialize_queue_registry(self) -> None:
+        """Rebuild the on-disk queue index from the frontier log."""
+        if self._queue_index_dir.exists():
+            shutil.rmtree(self._queue_index_dir)
+        self._queue_index_dir.mkdir(parents=True, exist_ok=True)
+
+        queue_size = 0
         try:
-            with open(self.frontier_path, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
+            with self.frontier_path.open('r', encoding='utf-8') as handle:
+                for line in handle:
+                    raw = line.strip()
+                    if not raw:
                         continue
-                    
                     try:
-                        data = json.loads(line)
-                        item = FrontierItem(**data)
-                        
-                        # Skip if already fetched (resume scenario)
-                        if item.url not in self._fetched:
-                            self._queue.append(item)
-                            self._queue_set.add(item.url)
-                    except Exception as e:
-                        logger.error(f"Failed to parse frontier line: {e}")
-            
-            # Sort by depth (breadth-first)
-            self._queue.sort(key=lambda x: (x.depth, x.score, x.discovered_at))
-            
-            logger.info(f"Loaded {len(self._queue)} URLs from frontier")
-            
-        except Exception as e:
-            logger.error(f"Failed to load frontier: {e}")
-            self._queue = []
-            self._queue_set = set()
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        logger.warning("Skipping malformed frontier line during index build")
+                        continue
+                    url = data.get('url')
+                    if not url:
+                        continue
+                    if self.is_fetched(url):
+                        continue
+                    if self._ensure_index_marker(self._queue_index_dir, url):
+                        queue_size += 1
+        except FileNotFoundError:
+            queue_size = 0
+        except Exception as exc:
+            logger.error("Failed to initialize queue registry: %s", exc)
+        self._queue_size = queue_size
+
+    def _open_queue_files(self) -> None:
+        """Ensure queue reader and writer handles are open."""
+        if self._queue_reader is None:
+            self._queue_reader = self.frontier_path.open('r', encoding='utf-8')
+            max_position = self.frontier_path.stat().st_size
+            self._read_position = min(self._read_position, max_position)
+            self._queue_reader.seek(self._read_position)
+        if self._queue_writer is None:
+            self._queue_writer = self.frontier_path.open('a', encoding='utf-8', buffering=1)
     
     def add(self, url: str, depth: int, score: float = 0.0, 
             page_type: Optional[str] = None, referrer: Optional[str] = None):
@@ -183,7 +224,7 @@ class CrawlFrontier:
             referrer: Optional referrer URL
         """
         # Check if already in queue or already fetched
-        if url in self._queue_set or url in self._fetched:
+        if self._index_exists(self._queue_index_dir, url) or self.is_fetched(url):
             return
         
         # Create frontier item
@@ -195,19 +236,18 @@ class CrawlFrontier:
             referrer=referrer
         )
         
-        # Add to in-memory queue
-        self._queue.append(item)
-        self._queue_set.add(url)
-        self.urls_added += 1
-        
-        # Maintain sorted order (insert in correct position for BFS)
-        # For efficiency, we'll sort periodically instead of on each insert
-        if len(self._queue) % 100 == 0:
-            self._sort_queue()
-    
-    def _sort_queue(self):
-        """Sort queue for breadth-first order."""
-        self._queue.sort(key=lambda x: (x.depth, x.score, x.discovered_at))
+        line = json.dumps(asdict(item))
+        if self._queue_writer is None:
+            self._open_queue_files()
+        try:
+            self._queue_writer.write(line + '\n')
+        except Exception as exc:
+            logger.error("Failed to append to frontier: %s", exc)
+            return
+
+        if self._ensure_index_marker(self._queue_index_dir, url):
+            self._queue_size += 1
+            self.urls_added += 1
     
     def pop(self) -> Optional[str]:
         """Pop next URL from frontier (breadth-first order).
@@ -218,27 +258,41 @@ class CrawlFrontier:
         Returns:
             Next URL to crawl, or None if frontier is empty
         """
-        if not self._queue:
+        if self._queue_size == 0:
             return None
         
-        # Ensure sorted (in case adds happened since last sort)
-        if self.urls_added % 100 == 0:
-            self._sort_queue()
-        
-        # Pop first item (lowest depth = BFS)
-        item = self._queue.pop(0)
-        self._queue_set.discard(item.url)
-        self.urls_popped += 1
-        
-        return item.url
+        self._open_queue_files()
+        while True:
+            self._queue_reader.seek(self._read_position)
+            line = self._queue_reader.readline()
+            if not line:
+                return None
+            self._read_position = self._queue_reader.tell()
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed frontier line during pop")
+                continue
+            url = data.get('url')
+            if not url:
+                continue
+            if self.is_fetched(url):
+                continue
+            if not self._index_exists(self._queue_index_dir, url):
+                continue
+            if self._remove_index_marker(self._queue_index_dir, url):
+                self._queue_size = max(0, self._queue_size - 1)
+            self.urls_popped += 1
+            self._persist_cursor()
+            return url
     
     def is_empty(self) -> bool:
         """Check if frontier is empty."""
-        return len(self._queue) == 0
+        return self._queue_size == 0
     
     def size(self) -> int:
         """Get current frontier size."""
-        return len(self._queue)
+        return self._queue_size
     
     def contains(self, url: str) -> bool:
         """Check if URL is in frontier queue.
@@ -249,50 +303,54 @@ class CrawlFrontier:
         Returns:
             True if URL is currently in the frontier queue
         """
-        return url in self._queue_set
+        return self._index_exists(self._queue_index_dir, url)
     
     # =========================================================================
     # Persistence and Cleanup
     # =========================================================================
     
     def persist(self):
-        """Persist frontier to disk (full rewrite).
-        
-        This is called periodically or on shutdown to save state.
-        """
+        """Persist cursor and statistics for crash-safe resume."""
         try:
-            # Write to temp file first (atomic)
-            tmp_path = self.frontier_path.with_suffix('.tmp')
-            
-            with open(tmp_path, 'w') as f:
-                for item in self._queue:
-                    f.write(json.dumps(asdict(item)) + '\n')
-            
-            # Atomic rename
-            tmp_path.replace(self.frontier_path)
-            
-            logger.info(f"Persisted frontier with {len(self._queue)} URLs")
-            
-        except Exception as e:
-            logger.error(f"Failed to persist frontier: {e}")
+            self._flush_queue_writer()
+            self._persist_cursor()
+            self._persist_stats()
+            logger.info("Persisted frontier state (queue_size=%d)", self._queue_size)
+        except Exception as exc:
+            logger.error("Failed to persist frontier: %s", exc)
     
     def compact(self):
-        """Remove fetched URLs from frontier.
-        
-        This is called periodically to clean up the frontier file.
-        Note: The fetched URLs are already in self._fetched, so we
-        just filter against it.
-        """
-        original_size = len(self._queue)
-        
-        # Filter out fetched URLs
-        self._queue = [item for item in self._queue if item.url not in self._fetched]
-        self._queue_set = {item.url for item in self._queue}
-        
-        removed = original_size - len(self._queue)
-        if removed > 0:
-            logger.info(f"Compacted frontier: removed {removed} fetched URLs")
-            self.persist()
+        """Remove fetched URLs from the frontier log and rebuild index."""
+        tmp_path = self.frontier_path.with_suffix('.tmp')
+        kept = 0
+        self._flush_queue_writer()
+        try:
+            with self.frontier_path.open('r', encoding='utf-8') as src, tmp_path.open('w', encoding='utf-8') as dst:
+                for line in src:
+                    raw = line.strip()
+                    if not raw:
+                        continue
+                    try:
+                        data = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    url = data.get('url')
+                    if not url:
+                        continue
+                    if self.is_fetched(url):
+                        continue
+                    dst.write(line if line.endswith('\n') else line + '\n')
+                    kept += 1
+            tmp_path.replace(self.frontier_path)
+            self._read_position = 0
+            self._persist_cursor()
+            self._reset_queue_handles()
+            self._initialize_queue_registry()
+            logger.info("Compacted frontier: kept %d URLs", kept)
+        except Exception as exc:
+            logger.error("Failed to compact frontier: %s", exc)
+            if tmp_path.exists():
+                tmp_path.unlink()
     
     def close(self):
         """Close frontier and persist final state."""
@@ -305,6 +363,111 @@ class CrawlFrontier:
         if self._fetched_file_handle:
             try:
                 self._fetched_file_handle.close()
-                logger.info(f"Crawl frontier closed - total fetched: {len(self._fetched)}")
+                logger.info("Crawl frontier closed - total fetched: %d", self._fetched_count)
             except Exception as e:
                 logger.error(f"Error closing fetched_urls file: {e}")
+            finally:
+                self._fetched_file_handle = None
+        
+        if self._queue_reader:
+            self._queue_reader.close()
+            self._queue_reader = None
+        if self._queue_writer:
+            self._queue_writer.close()
+            self._queue_writer = None
+
+    # =========================================================================
+    # Internal helpers
+    # =========================================================================
+
+    def _index_marker_path(self, base_dir: Path, url: str) -> Path:
+        digest = hashlib.sha256(url.encode('utf-8')).hexdigest()
+        return base_dir / digest[:2] / digest[2:4] / digest
+
+    def _ensure_index_marker(self, base_dir: Path, url: str) -> bool:
+        marker = self._index_marker_path(base_dir, url)
+        if marker.exists():
+            return False
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+        return True
+
+    def _remove_index_marker(self, base_dir: Path, url: str) -> bool:
+        marker = self._index_marker_path(base_dir, url)
+        if marker.exists():
+            marker.unlink()
+            self._prune_empty_dirs(base_dir, marker.parent)
+            return True
+        return False
+
+    def _index_exists(self, base_dir: Path, url: str) -> bool:
+        return self._index_marker_path(base_dir, url).exists()
+
+    def _prune_empty_dirs(self, base_dir: Path, path: Path) -> None:
+        try:
+            while path != path.parent and path != base_dir and not any(path.iterdir()):
+                path.rmdir()
+                path = path.parent
+        except OSError:
+            return
+
+    def _load_cursor(self) -> int:
+        if not self._cursor_path.exists():
+            try:
+                self._cursor_path.write_text('0', encoding='utf-8')
+            except Exception:
+                return 0
+            return 0
+        try:
+            value = self._cursor_path.read_text(encoding='utf-8').strip() or '0'
+            position = int(value)
+            return max(0, position)
+        except Exception as exc:
+            logger.warning("Falling back to cursor=0 due to error: %s", exc)
+            return 0
+
+    def _persist_cursor(self) -> None:
+        try:
+            self._cursor_path.write_text(str(self._read_position), encoding='utf-8')
+        except Exception as exc:
+            logger.error("Failed to persist frontier cursor: %s", exc)
+
+    def _load_stats(self) -> None:
+        if not self._stats_path.exists():
+            return
+        try:
+            payload = json.loads(self._stats_path.read_text(encoding='utf-8'))
+            self.urls_added = int(payload.get('urls_added', 0))
+            self.urls_popped = int(payload.get('urls_popped', 0))
+        except Exception as exc:
+            logger.warning("Failed to load frontier stats: %s", exc)
+            self.urls_added = 0
+            self.urls_popped = 0
+
+    def _persist_stats(self) -> None:
+        payload = {
+            'urls_added': self.urls_added,
+            'urls_popped': self.urls_popped,
+            'queue_size': self._queue_size,
+            'fetched_count': self._fetched_count,
+        }
+        try:
+            self._stats_path.write_text(json.dumps(payload), encoding='utf-8')
+        except Exception as exc:
+            logger.error("Failed to persist frontier stats: %s", exc)
+
+    def _flush_queue_writer(self) -> None:
+        if self._queue_writer:
+            try:
+                self._queue_writer.flush()
+            except Exception as exc:
+                logger.error("Failed to flush frontier writer: %s", exc)
+
+    def _reset_queue_handles(self) -> None:
+        if self._queue_reader:
+            self._queue_reader.close()
+            self._queue_reader = None
+        if self._queue_writer:
+            self._queue_writer.close()
+            self._queue_writer = None
+        self._open_queue_files()
