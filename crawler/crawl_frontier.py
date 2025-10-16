@@ -1,12 +1,3 @@
-"""Unified frontier and deduplication for URL crawling.
-
-Merges FileFrontier and FileDedupStore into a single module that:
-- Manages priority queue for URLs (BFS by depth)
-- Tracks fetched URLs for deduplication
-- Persists both to disk (frontier.jsonl and fetched_urls.txt)
-- Provides atomic operations for URL lifecycle
-"""
-
 import json
 import logging
 import time
@@ -19,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FrontierItem:
-    """Represents a URL in the frontier queue."""
     url: str
     depth: int
     score: float
@@ -33,20 +23,8 @@ class FrontierItem:
 
 
 class CrawlFrontier:
-    """Unified frontier and deduplication store for URL crawling.
-    
-    Combines priority queue management with deduplication tracking
-    for streamlined URL lifecycle management.
-    """
     
     def __init__(self, frontier_path: str, fetched_urls_path: str):
-        """Initialize crawl frontier with deduplication.
-        
-        Args:
-            frontier_path: Path to frontier.jsonl file
-            fetched_urls_path: Path to fetched_urls.txt file
-        """
-        # Frontier setup
         self.frontier_path = Path(frontier_path)
         self.frontier_path.parent.mkdir(parents=True, exist_ok=True)
         

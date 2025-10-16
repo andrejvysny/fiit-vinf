@@ -1,14 +1,3 @@
-"""Unified crawler service - single fetch, store, and extract operation.
-
-This refactored crawler:
-- Fetches each URL only ONCE
-- Stores HTML immediately during fetch
-- Extracts links from fetched HTML
-- Writes unified metadata (crawl + scrape combined)
-- Uses file-based storage (no LMDB)
-- Eliminates need for separate scraper service
-"""
-
 import asyncio
 import logging
 import time
@@ -17,13 +6,13 @@ from pathlib import Path
 from typing import List, Optional, Dict
 from collections import defaultdict
 
-from crawler.config import CrawlerScraperConfig
-from crawler.frontier.crawl_frontier import CrawlFrontier
-from crawler.crawl_policy import CrawlPolicy
-from crawler.parse.extractor import LinkExtractor
-from crawler.net.unified_fetcher import UnifiedFetcher
-from crawler.io.metadata_writer import UnifiedMetadataWriter
-from crawler.url_tools import canonicalize, extract_repo_info
+from .config import CrawlerScraperConfig
+from .crawl_frontier import CrawlFrontier
+from .crawl_policy import CrawlPolicy
+from .extractor import LinkExtractor
+from .unified_fetcher import UnifiedFetcher
+from .metadata_writer import UnifiedMetadataWriter
+from .url_tools import canonicalize, extract_repo_info
 
 logger = logging.getLogger(__name__)
 
@@ -34,27 +23,22 @@ class CrawlerScraperService:
         self.config = config
         self.workspace = config.get_workspace_path()
         
-        # Components (initialized in start())
         self.frontier: Optional[CrawlFrontier] = None
         self.policy: Optional[CrawlPolicy] = None
         self.fetcher: Optional[UnifiedFetcher] = None
         self.extractor: Optional[LinkExtractor] = None
         self.metadata_writer: Optional[UnifiedMetadataWriter] = None
         
-        # State
         self._stop = False
         self._running = False
         
-        # Per-repo counters for caps enforcement
         self._repo_pages: Dict[str, int] = defaultdict(int)
         self._repo_issues: Dict[str, int] = defaultdict(int)
         self._repo_prs: Dict[str, int] = defaultdict(int)
         
-        # URL depth tracking (for metadata)
         self._url_depth: Dict[str, int] = {}
         self._url_referrer: Dict[str, str] = {}
         
-        # Metrics
         self.stats = {
             "urls_fetched": 0,
             "urls_stored": 0,
@@ -108,6 +92,8 @@ class CrawlerScraperService:
         self.fetcher = UnifiedFetcher(
             store_root=str(store_dir),
             user_agent=self.config.user_agent,
+            user_agents=self.config.user_agents,
+            user_agent_rotation_size=self.config.user_agent_rotation_size,
             accept_language=self.config.accept_language,
             accept_encoding=self.config.accept_encoding,
             connect_timeout_ms=self.config.limits.connect_timeout_ms,
@@ -117,7 +103,8 @@ class CrawlerScraperService:
             backoff_cap_ms=self.config.limits.backoff_cap_ms,
             req_per_sec=self.config.limits.req_per_sec,
             compress=False,  # Can be configured
-            permissions=0o644
+            permissions=0o644,
+            proxy_config=self.config.proxies
         )
         
         # Initialize link extractor
@@ -185,10 +172,8 @@ class CrawlerScraperService:
                 # Process URL (fetch + store + extract + enqueue)
                 await self._process_url(url)
                 
-                # Increment request counter
                 self._request_counter += 1
                 
-                # Apply dynamic sleep after each request
                 per_request_sleep = random.uniform(
                     self.config.sleep.per_request_min,
                     self.config.sleep.per_request_max
@@ -196,7 +181,6 @@ class CrawlerScraperService:
                 logger.info(f"Sleeping for {per_request_sleep:.2f}s after request...")
                 await asyncio.sleep(per_request_sleep)
                 
-                # Apply batch pause after N requests
                 if self._request_counter % self.config.sleep.batch_size == 0:
                     batch_pause = random.uniform(
                         self.config.sleep.batch_pause_min,
@@ -205,7 +189,6 @@ class CrawlerScraperService:
                     logger.info(f"Batch pause ({self._request_counter} requests) - sleeping for {batch_pause:.2f}s...")
                     await asyncio.sleep(batch_pause)
                 
-                # Periodically save frontier state
                 if time.time() - self._last_frontier_save > self._frontier_save_interval:
                     self.frontier.persist()
                     self._last_frontier_save = time.time()
@@ -220,40 +203,25 @@ class CrawlerScraperService:
             logger.info("Crawler main loop stopped")
     
     async def _process_url(self, url: str):
-        """Fetch URL, store HTML, extract links, and enqueue new URLs.
-        
-        This is the unified operation that replaces separate crawl+scrape.
-        
-        Args:
-            url: URL to process
-        """
         logger.info(f"Processing: {url}")
         
-        # Get depth and referrer for this URL
         depth = self._url_depth.get(url, 0)
         referrer = self._url_referrer.get(url)
         
-        # Classify page type
         page_type = self.policy.classify(url)
         
-        # Check if already fetched (shouldn't happen but double-check)
         if self.frontier.is_fetched(url):
             logger.debug(f"URL already fetched (skipping): {url}")
             self.stats["already_fetched"] += 1
             return
         
-        # UNIFIED FETCH + STORE operation
         result = await self.fetcher.fetch_and_store(url)
-        
-        # Mark as fetched immediately
         self.frontier.mark_fetched(url)
         
         if not result.get('ok'):
-            # Fetch failed
             logger.warning(f"Failed to fetch {url}: {result.get('error')}")
             self.stats["fetch_errors"] += 1
             
-            # Write metadata even for failures
             metadata_record = self.metadata_writer.build_record(
                 url=url,
                 depth=depth,
@@ -265,18 +233,20 @@ class CrawlerScraperService:
                 content_bytes=0,
                 fetch_latency_ms=result.get('fetch_latency_ms', 0.0),
                 retries=result.get('retries', 0),
-                extra_metadata={'error': result.get('error')}
+                extra_metadata={
+                    'error': result.get('error'),
+                    'user_agent': result.get('user_agent'),
+                    'request_headers': result.get('request_headers')
+                }
             )
             self.metadata_writer.write(metadata_record)
             return
         
-        # Success!
         self.stats["urls_fetched"] += 1
         self.stats["urls_stored"] += 1
         
         logger.info(f"  ✓ Fetched and stored: {result['stored_path']} ({result['content_bytes']} bytes)")
         
-        # Write unified metadata (crawl + scrape combined)
         metadata_record = self.metadata_writer.build_record(
             url=url,
             depth=depth,
@@ -291,7 +261,11 @@ class CrawlerScraperService:
             etag=result.get('etag', ''),
             last_modified=result.get('last_modified', ''),
             fetch_latency_ms=result['fetch_latency_ms'],
-            retries=result['retries']
+            retries=result['retries'],
+            extra_metadata={
+                'user_agent': result.get('user_agent'),
+                'request_headers': result.get('request_headers')
+            }
         )
         self.metadata_writer.write(metadata_record)
         
@@ -317,27 +291,16 @@ class CrawlerScraperService:
             logger.warning(f"No HTML content returned for link extraction: {url}")
     
     async def _enqueue_url(self, url: str, referrer: str, depth: int):
-        """Add URL to frontier if allowed and not fetched.
-        
-        Args:
-            url: URL to enqueue
-            referrer: URL that linked to this one
-            depth: Crawl depth
-        """
-        # Canonicalize
         canonical = canonicalize(url)
         if referrer and canonical == referrer:
             return
         
-        # Check if already fetched
         if self.frontier.is_fetched(canonical):
             return
         
-        # Check if already in frontier
         if self.frontier.contains(canonical):
             return
         
-        # Check policy
         policy_result = await self.policy.gate(canonical)
         if not policy_result["ok"]:
             self.stats["policy_denied"] += 1
@@ -351,13 +314,11 @@ class CrawlerScraperService:
             if self.frontier.is_fetched(canonical) or self.frontier.contains(canonical):
                 return
         
-        # Check caps (per-repo limits)
         if not self._check_caps(canonical, policy_result.get("page_type")):
             self.stats["cap_exceeded"] += 1
             logger.debug(f"Cap exceeded for {canonical}")
             return
         
-        # Add to frontier
         self.frontier.add(
             url=canonical,
             depth=depth,
@@ -366,7 +327,6 @@ class CrawlerScraperService:
             referrer=referrer
         )
         
-        # Track depth and referrer for later
         self._url_depth[canonical] = depth
         self._url_referrer[canonical] = referrer
         
@@ -374,25 +334,14 @@ class CrawlerScraperService:
         logger.debug(f"Enqueued: {canonical} (depth={depth})")
     
     def _check_caps(self, url: str, page_type: Optional[str]) -> bool:
-        """Check if URL exceeds per-repo caps.
-        
-        Args:
-            url: URL to check
-            page_type: Page type classification
-            
-        Returns:
-            True if under caps, False if exceeded
-        """
-        # Extract repo info
+
         repo_info = extract_repo_info(url)
         if not repo_info:
-            # Not a repo URL, allow
             return True
         
         owner, repo = repo_info
         repo_key = f"{owner}/{repo}"
         
-        # Check page type limits
         if page_type == "issues":
             if self._repo_issues[repo_key] >= self.config.caps.per_repo_max_issues:
                 return False
@@ -404,7 +353,6 @@ class CrawlerScraperService:
             self._repo_prs[repo_key] += 1
         
         else:
-            # General page
             if self._repo_pages[repo_key] >= self.config.caps.per_repo_max_pages:
                 return False
             self._repo_pages[repo_key] += 1
@@ -412,15 +360,12 @@ class CrawlerScraperService:
         return True
     
     async def stop(self) -> None:
-        """Stop crawler and cleanup resources."""
-        logger.info("Stopping unified crawler...")
+        logger.info("Stopping crawler...")
         self._stop = True
         
-        # Wait for main loop to stop
         while self._running:
             await asyncio.sleep(0.1)
         
-        # Cleanup components
         logger.info("Cleaning up components...")
         
         if self.frontier:
@@ -434,10 +379,9 @@ class CrawlerScraperService:
         
         if self.metadata_writer:
             self.metadata_writer.close()
-        
-        # Print final statistics
-        logger.info("=== Unified Crawler Statistics ===")
+
+        logger.info("=== Crawler Statistics ===")
         for key, value in self.stats.items():
             logger.info(f"  {key}: {value}")
-        
-        logger.info("Unified crawler stopped successfully")
+
+        logger.info("Crawler stopped successfully")

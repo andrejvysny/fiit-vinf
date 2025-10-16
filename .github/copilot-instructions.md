@@ -16,7 +16,10 @@
 
 ## Local Workflows
 - Install deps with `python -m pip install -r requirements.txt`; optional extras (e.g. `zstandard`) are commented when needed.
-- Run the crawler via `python main.py --config config.yaml --seeds seeds.txt`; workspace paths resolve relative to `config.workspace` (default `./workspace`).
+- Always activate the project's virtual environment before running the crawler. Run from the project root using:
+    source venv/bin/activate && python3 main.py
+- Never attempt to execute inline Python code snippets — always run the application entrypoint (`main.py`) after activating the venv.
+- Run the crawler via `python main.py`; workspace paths resolve relative to `config.workspace` (default `./workspace`).
 - Logs stream to stdout and `workspace/logs/crawler.log`; inspect `workspace/state/*.jsonl` to debug queue/robots cache state when resuming runs.
 - The crawler is single-threaded; if you introduce concurrency, ensure `CrawlFrontier` persistence and rate limiting remain atomic (see `_rate_lock`).
 - Tests are not present; when adding behavior, create focused async smoke scripts instead of attempting to reuse the removed legacy test harness.

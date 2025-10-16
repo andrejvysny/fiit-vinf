@@ -1,13 +1,3 @@
-"""Unified fetcher that combines HTTP fetching with HTML storage.
-
-Single fetch operation that:
-1. Fetches HTML from URL
-2. Stores HTML in content-addressed store
-3. Returns unified metadata
-
-Eliminates duplicate fetches between crawler and scraper.
-"""
-
 import httpx
 import asyncio
 import time
@@ -16,6 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, Any, Optional
 from urllib.parse import urlsplit
+
+from .config import ProxyConfig
 
 try:
     import zstandard as zstd
@@ -27,12 +19,12 @@ logger = logging.getLogger(__name__)
 
 
 class UnifiedFetcher:
-    """Unified HTTP fetcher with integrated HTML storage."""
     
     def __init__(
         self,
         store_root: str,
         user_agent: str,
+        user_agents: Optional[list] = None,
         accept_language: str = "en",
         accept_encoding: str = "br, gzip",
         connect_timeout_ms: int = 4000,
@@ -42,28 +34,20 @@ class UnifiedFetcher:
         backoff_cap_ms: int = 8000,
         req_per_sec: float = 1.0,
         compress: bool = False,
-        permissions: int = 0o644
+        user_agent_rotation_size: int = 1,
+        permissions: int = 0o644,
+        proxy_config: Optional[ProxyConfig] = None
     ):
-        """Initialize unified fetcher.
-        
-        Args:
-            store_root: Root directory for HTML storage
-            user_agent: User agent string
-            accept_language: Accept-Language header
-            accept_encoding: Accept-Encoding header
-            connect_timeout_ms: Connection timeout in milliseconds
-            read_timeout_ms: Read timeout in milliseconds
-            max_retries: Maximum retry attempts
-            backoff_base_ms: Base backoff in milliseconds
-            backoff_cap_ms: Maximum backoff in milliseconds
-            req_per_sec: Request rate limit (requests per second)
-            compress: Enable zstd compression for storage
-            permissions: File permissions for stored HTML
-        """
+
         self.store_root = Path(store_root)
         self.store_root.mkdir(parents=True, exist_ok=True)
         
-        self.user_agent = user_agent
+        # User-Agent handling: rotate through provided list if available
+        self.user_agents = list(user_agents) if user_agents else [user_agent]
+        if not self.user_agents:
+            self.user_agents = [user_agent]
+        self._ua_index = 0
+        self._ua_counter = 0
         self.accept_language = accept_language
         self.accept_encoding = accept_encoding
         self.max_retries = max_retries
@@ -72,20 +56,44 @@ class UnifiedFetcher:
         self.req_per_sec = req_per_sec
         self.compress = compress
         self.permissions = permissions
+        self.user_agent_rotation_size = max(1, int(user_agent_rotation_size or 1))
+        self.proxy_config = proxy_config or ProxyConfig()
+        self._proxy_pool = list(self.proxy_config.pool)
+        self._proxy_index = 0
+        if self.proxy_config.enabled:
+            logger.info("Proxy configuration detected; requests remain direct until proxy routing is enabled")
         
         if compress and not ZSTD_AVAILABLE:
             logger.warning("zstd compression requested but zstandard package not available")
             self.compress = False
         
-        # Create HTTP client
+        self.client = self._create_http_client(
+            connect_timeout_ms=connect_timeout_ms,
+            read_timeout_ms=read_timeout_ms
+        )
+        
+        self._last_request_time = 0.0
+        self._rate_lock = asyncio.Lock()
+        
+        self.total_fetches = 0
+        self.successful_fetches = 0
+        self.failed_fetches = 0
+        self.files_stored = 0
+        self.bytes_stored = 0
+        self.bytes_downloaded = 0
+        
+        logger.info(f"Unified fetcher initialized - store: {self.store_root}, compress: {self.compress}")
+    
+    def _create_http_client(self, connect_timeout_ms: int, read_timeout_ms: int) -> httpx.AsyncClient:
+        """Construct the HTTP client; proxy attachment will be added later."""
         timeout = httpx.Timeout(
             connect=connect_timeout_ms / 1000,
             read=read_timeout_ms / 1000,
             write=read_timeout_ms / 1000,
             pool=None
         )
-        
-        self.client = httpx.AsyncClient(
+
+        client = httpx.AsyncClient(
             http2=True,
             timeout=timeout,
             limits=httpx.Limits(
@@ -96,23 +104,21 @@ class UnifiedFetcher:
             follow_redirects=True,
             max_redirects=5
         )
-        
-        # Rate limiting
-        self._last_request_time = 0.0
-        self._rate_lock = asyncio.Lock()
-        
-        # Statistics
-        self.total_fetches = 0
-        self.successful_fetches = 0
-        self.failed_fetches = 0
-        self.files_stored = 0
-        self.bytes_stored = 0
-        self.bytes_downloaded = 0
-        
-        logger.info(f"Unified fetcher initialized - store: {self.store_root}, compress: {self.compress}")
-    
+
+        return client
+
+    def _select_proxy(self) -> Optional[str]:
+        if not self.proxy_config.enabled:
+            return None
+
+        if self._proxy_pool:
+            choice = self._proxy_pool[self._proxy_index % len(self._proxy_pool)]
+            self._proxy_index += 1
+            return choice
+
+        return self.proxy_config.http_url or self.proxy_config.https_url
+
     async def _wait_for_rate_limit(self):
-        """Enforce rate limit by waiting if necessary."""
         async with self._rate_lock:
             now = time.time()
             min_interval = 1.0 / self.req_per_sec
@@ -125,26 +131,6 @@ class UnifiedFetcher:
             self._last_request_time = time.time()
     
     async def fetch_and_store(self, url: str) -> Dict[str, Any]:
-        """Fetch URL and store HTML in one operation.
-        
-        Args:
-            url: URL to fetch
-            
-        Returns:
-            Result dict with:
-            - ok: bool (success flag)
-            - status: int (HTTP status code)
-            - error: str (error message if failed)
-            - content_sha256: str (SHA-256 hash)
-            - stored_path: str (path to stored file)
-            - content_bytes: int (original size)
-            - content_type: str
-            - encoding: str
-            - etag: str
-            - last_modified: str
-            - fetch_latency_ms: float
-            - retries: int
-        """
         self.total_fetches += 1
         
         # Wait for rate limit
@@ -153,40 +139,38 @@ class UnifiedFetcher:
         retries = 0
         
         while retries <= self.max_retries:
+            headers: Dict[str, str] = {}
+            ua: Optional[str] = None
             try:
-                # Build headers
+                ua = self.user_agents[self._ua_index % len(self.user_agents)]
                 headers = {
-                    "User-Agent": self.user_agent,
+                    "User-Agent": ua,
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "Accept-Language": self.accept_language,
                     "Accept-Encoding": self.accept_encoding,
                     "Connection": "keep-alive",
                 }
+                logger.info("Request headers for %s: %s", url, headers)
+                self._advance_user_agent()
                 
-                # Fetch
                 start_time = time.time()
                 
                 response = await self.client.get(url, headers=headers)
                 latency_ms = (time.time() - start_time) * 1000
                 
-                # Check status
                 if response.status_code == 200:
-                    # Success
                     html_bytes = response.content
                     self.bytes_downloaded += len(html_bytes)
                     
-                    # Extract headers
                     content_type = response.headers.get("content-type", "")
                     encoding = response.headers.get("content-encoding", "")
                     etag = response.headers.get("etag", "")
                     last_modified = response.headers.get("last-modified", "")
                     
-                    # Check if HTML (simple check)
                     if "text/html" not in content_type.lower() and "text/html" not in content_type:
                         # Not HTML, but we'll store it anyway for this implementation
                         logger.debug(f"Non-HTML content type: {content_type} for {url}")
                     
-                    # Store HTML
                     storage_result = self._store_html(html_bytes)
                     
                     self.successful_fetches += 1
@@ -203,18 +187,21 @@ class UnifiedFetcher:
                         'last_modified': last_modified,
                         'fetch_latency_ms': latency_ms,
                         'retries': retries,
+                        'user_agent': ua,
+                        'request_headers': headers,
                         'html': html_bytes.decode('utf-8', errors='ignore')  # Return HTML for link extraction
                     }
                 
                 elif response.status_code in [404, 403, 410]:
-                    # Client error - don't retry
                     self.failed_fetches += 1
                     return {
                         'ok': False,
                         'status': response.status_code,
                         'error': f"HTTP {response.status_code}",
                         'fetch_latency_ms': latency_ms,
-                        'retries': retries
+                        'retries': retries,
+                        'user_agent': ua,
+                        'request_headers': headers
                     }
                 
                 elif response.status_code == 429:
@@ -239,7 +226,6 @@ class UnifiedFetcher:
                     continue
                 
                 else:
-                    # Server error - retry with backoff
                     logger.warning(f"HTTP {response.status_code}: {url}, attempt {retries + 1}/{self.max_retries + 1}")
                     
                     backoff_ms = min(self.backoff_base_ms * (2 ** retries), self.backoff_cap_ms)
@@ -249,7 +235,6 @@ class UnifiedFetcher:
                     continue
             
             except httpx.RequestError as e:
-                # Network error - retry
                 logger.warning(f"Request error for {url}: {e}, attempt {retries + 1}/{self.max_retries + 1}")
                 
                 if retries >= self.max_retries:
@@ -258,7 +243,9 @@ class UnifiedFetcher:
                         'ok': False,
                         'status': 0,
                         'error': str(e),
-                        'retries': retries
+                        'retries': retries,
+                        'user_agent': ua,
+                        'request_headers': headers
                     }
                 
                 backoff_ms = min(self.backoff_base_ms * (2 ** retries), self.backoff_cap_ms)
@@ -268,51 +255,45 @@ class UnifiedFetcher:
                 continue
             
             except Exception as e:
-                # Unexpected error
                 logger.error(f"Unexpected error fetching {url}: {e}")
                 self.failed_fetches += 1
                 return {
                     'ok': False,
                     'status': 0,
                     'error': str(e),
-                    'retries': retries
+                    'retries': retries,
+                    'user_agent': ua,
+                    'request_headers': headers
                 }
         
-        # Max retries exceeded
         self.failed_fetches += 1
         return {
             'ok': False,
             'status': 0,
             'error': 'Max retries exceeded',
-            'retries': retries
+            'retries': retries,
+            'user_agent': ua,
+            'request_headers': headers
         }
     
+    def _advance_user_agent(self) -> None:
+        self._ua_counter += 1
+        if self._ua_counter >= self.user_agent_rotation_size:
+            self._ua_counter = 0
+            if len(self.user_agents) > 1:
+                self._ua_index = (self._ua_index + 1) % len(self.user_agents)
+
     def _store_html(self, html_bytes: bytes) -> Dict[str, Any]:
-        """Store HTML content to disk (content-addressed).
-        
-        Args:
-            html_bytes: Raw HTML bytes
-            
-        Returns:
-            Dict with:
-            - sha256: Content hash
-            - stored_path: Path where file was stored
-            - already_exists: bool
-        """
-        # Calculate SHA-256 hash
         sha256 = hashlib.sha256(html_bytes).hexdigest()
         
-        # Create nested directory structure (aa/bb/sha256.html[.zst])
         subdir = self.store_root / sha256[:2] / sha256[2:4]
         subdir.mkdir(parents=True, exist_ok=True)
         
-        # Determine file path
         if self.compress:
             file_path = subdir / f"{sha256}.html.zst"
         else:
             file_path = subdir / f"{sha256}.html"
         
-        # Check if already exists (deduplication)
         if file_path.exists():
             return {
                 'sha256': sha256,
@@ -320,7 +301,6 @@ class UnifiedFetcher:
                 'already_exists': True
             }
         
-        # Prepare data for writing
         if self.compress:
             compressor = zstd.ZstdCompressor(level=10, threads=-1)
             data_to_write = compressor.compress(html_bytes)
@@ -331,14 +311,11 @@ class UnifiedFetcher:
         tmp_path = file_path.with_suffix(file_path.suffix + '.tmp')
         
         try:
-            # Write to temp file
             with open(tmp_path, 'wb') as f:
                 f.write(data_to_write)
             
-            # Set permissions
             tmp_path.chmod(self.permissions)
             
-            # Atomic rename
             tmp_path.replace(file_path)
             
             self.files_stored += 1
@@ -352,11 +329,9 @@ class UnifiedFetcher:
             
         except Exception as e:
             logger.error(f"Failed to store HTML for sha256={sha256}: {e}")
-            # Clean up temp file
             if tmp_path.exists():
                 tmp_path.unlink()
             
-            # Return error but include sha256
             return {
                 'sha256': sha256,
                 'stored_path': '',

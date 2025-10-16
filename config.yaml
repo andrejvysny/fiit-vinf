@@ -5,7 +5,14 @@ run_id: "unified-2025-01-12"
 workspace: "./workspace"
 
 # User agent MUST include contact information
-user_agent: "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
+# You can provide a single user_agent or a list 'user_agents' to rotate per request.
+#user_agent: "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
+user_agents:
+  - "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
+  - Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0
+  - Mozilla/5.0 (Macintosh; Intel Mac OS X x.y; rv:42.0) Gecko/20100101 Firefox/42.0
+user_agent_rotation_size: 3
+
 accept_language: "en"
 accept_encoding: "br, gzip"
 
