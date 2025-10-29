@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import time
 import random
@@ -50,12 +51,162 @@ class CrawlerScraperService:
             "cap_exceeded": 0
         }
         
+        # Runtime tracking
+        self.start_time = None
+        self._stats_path = None
+        
         # Periodic save interval
         self._last_frontier_save = time.time()
+        self._last_stats_save = time.time()
         self._frontier_save_interval = 60  # Save frontier every 60 seconds
+        self._stats_save_interval = 60  # Save service stats every 60 seconds
         
         # Dynamic sleep tracking for batch pauses
         self._request_counter = 0
+    
+    def _calculate_html_files_count(self) -> int:
+        """Count total number of stored HTML files.
+        
+        Returns:
+            Number of HTML files in storage
+        """
+        store_dir = self.workspace / "store" / "html"
+        if not store_dir.exists():
+            return 0
+        
+        count = 0
+        try:
+            for html_file in store_dir.rglob("*.html"):
+                if html_file.is_file():
+                    count += 1
+        except Exception as exc:
+            logger.warning(f"Failed to count HTML files: {exc}")
+        
+        return count
+    
+    def _calculate_html_storage_bytes(self) -> int:
+        """Calculate total storage size of HTML files in bytes.
+        
+        Returns:
+            Total bytes used by HTML storage
+        """
+        store_dir = self.workspace / "store" / "html"
+        if not store_dir.exists():
+            return 0
+        
+        total_bytes = 0
+        try:
+            for html_file in store_dir.rglob("*.html"):
+                if html_file.is_file():
+                    total_bytes += html_file.stat().st_size
+        except Exception as exc:
+            logger.warning(f"Failed to calculate storage size: {exc}")
+        
+        return total_bytes
+    
+    def _format_bytes(self, bytes_value: int) -> str:
+        """Format bytes into human-readable string.
+        
+        Args:
+            bytes_value: Number of bytes
+            
+        Returns:
+            Formatted string (e.g., "1.5 GB", "234.2 MB")
+        """
+        if bytes_value < 1024:
+            return f"{bytes_value} B"
+        elif bytes_value < 1024 * 1024:
+            return f"{bytes_value / 1024:.2f} KB"
+        elif bytes_value < 1024 * 1024 * 1024:
+            return f"{bytes_value / (1024 * 1024):.2f} MB"
+        else:
+            return f"{bytes_value / (1024 * 1024 * 1024):.2f} GB"
+    
+    def _get_runtime_seconds(self) -> float:
+        """Get current runtime in seconds.
+        
+        Returns:
+            Runtime in seconds since start, or 0 if not started
+        """
+        if self.start_time is None:
+            return 0.0
+        return time.time() - self.start_time
+    
+    def _get_acceptance_rate(self) -> float:
+        """Calculate URL acceptance rate (enqueued / total evaluated).
+        
+        Returns:
+            Acceptance rate as percentage (0-100)
+        """
+        total_evaluated = self.stats["urls_enqueued"] + self.stats["policy_denied"]
+        if total_evaluated == 0:
+            return 0.0
+        return (self.stats["urls_enqueued"] / total_evaluated) * 100.0
+    
+    def _load_service_stats(self) -> None:
+        """Load persisted service statistics from disk.
+        
+        Loads stats from service_stats.json and updates self.stats.
+        Also restores start_time for accurate runtime tracking across restarts.
+        """
+        if self._stats_path is None or not self._stats_path.exists():
+            return
+        
+        try:
+            payload = json.loads(self._stats_path.read_text(encoding='utf-8'))
+            
+            # Restore counters
+            for key in self.stats.keys():
+                if key in payload:
+                    self.stats[key] = int(payload[key])
+            
+            # Restore start_time for runtime tracking
+            if "start_time" in payload:
+                self.start_time = float(payload["start_time"])
+            
+            logger.info("Loaded service statistics from previous session")
+        except Exception as exc:
+            logger.warning(f"Failed to load service stats: {exc}")
+    
+    def _persist_service_stats(self) -> None:
+        """Persist service statistics to disk.
+        
+        Saves current stats along with computed metrics to service_stats.json.
+        """
+        if self._stats_path is None:
+            return
+        
+        # Calculate current metrics
+        html_files = self._calculate_html_files_count()
+        storage_bytes = self._calculate_html_storage_bytes()
+        runtime_seconds = self._get_runtime_seconds()
+        acceptance_rate = self._get_acceptance_rate()
+        
+        payload = {
+            # Core counters
+            **self.stats,
+            
+            # Runtime tracking
+            "start_time": self.start_time if self.start_time else time.time(),
+            "runtime_seconds": runtime_seconds,
+            
+            # Storage metrics
+            "html_files_count": html_files,
+            "html_storage_bytes": storage_bytes,
+            "html_storage_formatted": self._format_bytes(storage_bytes),
+            
+            # Derived metrics
+            "acceptance_rate_percent": acceptance_rate,
+            
+            # Timestamp
+            "last_updated": time.time()
+        }
+        
+        try:
+            self._stats_path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+            logger.debug("Persisted service statistics")
+        except Exception as exc:
+            logger.error(f"Failed to persist service stats: {exc}")
     
     async def start(self, seeds: List[str]) -> None:
         """Initialize components and seed frontier.
@@ -65,6 +216,10 @@ class CrawlerScraperService:
         """
         logger.info("Initializing unified crawler components...")
         
+        # Initialize runtime tracking
+        if self.start_time is None:
+            self.start_time = time.time()
+        
         # Ensure directories exist
         state_dir = self.workspace / "state"
         metadata_dir = self.workspace / "metadata"
@@ -73,6 +228,10 @@ class CrawlerScraperService:
         state_dir.mkdir(parents=True, exist_ok=True)
         metadata_dir.mkdir(parents=True, exist_ok=True)
         store_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Initialize stats persistence
+        self._stats_path = state_dir / "service_stats.json"
+        self._load_service_stats()
         
         # Initialize unified crawl frontier (includes deduplication)
         frontier_path = state_dir / "frontier.jsonl"
@@ -139,6 +298,9 @@ class CrawlerScraperService:
         # Save initial frontier state
         self.frontier.persist()
         
+        # Save initial service stats
+        self._persist_service_stats()
+        
         logger.info(f"Crawler initialized. Frontier size: {self.frontier.size()}, Already fetched: {self.frontier.fetched_count()}")
     
     async def run(self) -> None:
@@ -193,6 +355,11 @@ class CrawlerScraperService:
                     self.frontier.persist()
                     self._last_frontier_save = time.time()
                     logger.info(f"Periodic frontier save - remaining URLs: {self.frontier.size()}")
+                
+                # Periodic service stats persistence
+                if time.time() - self._last_stats_save > self._stats_save_interval:
+                    self._persist_service_stats()
+                    self._last_stats_save = time.time()
         
         except asyncio.CancelledError:
             logger.info("Crawler cancelled")
@@ -380,8 +547,59 @@ class CrawlerScraperService:
         if self.metadata_writer:
             self.metadata_writer.close()
 
+        # Persist final service stats
+        self._persist_service_stats()
+
+        # Calculate final metrics for display
+        html_files = self._calculate_html_files_count()
+        storage_bytes = self._calculate_html_storage_bytes()
+        runtime_seconds = self._get_runtime_seconds()
+        acceptance_rate = self._get_acceptance_rate()
+
         logger.info("=== Crawler Statistics ===")
+        logger.info("--- Core Metrics ---")
         for key, value in self.stats.items():
             logger.info(f"  {key}: {value}")
+        
+        logger.info("--- Storage Metrics ---")
+        logger.info(f"  html_files_count: {html_files}")
+        logger.info(f"  html_storage_bytes: {storage_bytes}")
+        logger.info(f"  html_storage_size: {self._format_bytes(storage_bytes)}")
+        
+        logger.info("--- Runtime Metrics ---")
+        logger.info(f"  runtime_seconds: {runtime_seconds:.2f}")
+        logger.info(f"  runtime_formatted: {self._format_runtime(runtime_seconds)}")
+        
+        logger.info("--- Derived Metrics ---")
+        logger.info(f"  acceptance_rate: {acceptance_rate:.2f}%")
+        
+        total_evaluated = self.stats["urls_enqueued"] + self.stats["policy_denied"]
+        if total_evaluated > 0:
+            logger.info(f"  total_urls_evaluated: {total_evaluated}")
+            logger.info(f"  urls_accepted: {self.stats['urls_enqueued']} ({acceptance_rate:.2f}%)")
+            logger.info(f"  urls_rejected: {self.stats['policy_denied']} ({100 - acceptance_rate:.2f}%)")
 
         logger.info("Crawler stopped successfully")
+    
+    def _format_runtime(self, seconds: float) -> str:
+        """Format runtime seconds into human-readable string.
+        
+        Args:
+            seconds: Runtime in seconds
+            
+        Returns:
+            Formatted string (e.g., "2h 15m 30s")
+        """
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        parts = []
+        if hours > 0:
+            parts.append(f"{hours}h")
+        if minutes > 0:
+            parts.append(f"{minutes}m")
+        if secs > 0 or not parts:
+            parts.append(f"{secs}s")
+        
+        return " ".join(parts)

@@ -71,7 +71,7 @@ scope:
 
 # Rate limiting - conservative settings
 limits:
-  global_concurrency: 2        # Max concurrent requests
+  global_concurrency: 4        # Max concurrent requests
   per_host_concurrency: 2      # Max per host
   req_per_sec: 1.0            # Target request rate (1 req/sec)
   connect_timeout_ms: 4000    # 4 seconds
@@ -91,12 +91,12 @@ caps:
 # Dynamic sleep/pause configuration for human-like behavior
 sleep:
   # Sleep after each request (in seconds) - random value in range
-  per_request_min: 1
-  per_request_max: 2
+  per_request_min: 3
+  per_request_max: 5
   
   # Batch pause after N requests (in seconds) - random value in range
-  batch_pause_min: 3
-  batch_pause_max: 5
+  batch_pause_min: 10
+  batch_pause_max: 20
   
   # Batch size - number of requests before applying batch pause
   batch_size: 50

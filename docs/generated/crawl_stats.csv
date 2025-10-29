@@ -1,0 +1,6 @@
+page_type,documents,share_percent,total_bytes,total_bytes_human,avg_bytes,avg_bytes_human,relevant
+topic,11875,49.8510,5216047181,4.86 GB,439246.08,428.95 KB,no
+repo_root,7877,33.0675,2873592328,2.68 GB,364807.96,356.26 KB,yes
+issues,4038,16.9514,1023426383,976.02 MB,253448.83,247.51 KB,yes
+pull,30,0.1259,13160785,12.55 MB,438692.83,428.41 KB,yes
+trending,1,0.0042,616606,602.15 KB,616606.00,602.15 KB,no
