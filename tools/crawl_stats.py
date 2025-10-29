@@ -152,6 +152,8 @@ class CrawlStats:
     relevant_bytes: int = 0
     first_timestamp: Optional[int] = None
     last_timestamp: Optional[int] = None
+    # Collected timestamps of metadata records (epoch seconds)
+    timestamps: List[int] = field(default_factory=list)
 
     def ingest(self, record: Dict) -> None:
         status = int(record.get("http_status") or 0)
@@ -181,6 +183,8 @@ class CrawlStats:
         ts = record.get("timestamp")
         if isinstance(ts, (int, float)):
             ts_int = int(ts)
+            # collect timestamp for run segmentation
+            self.timestamps.append(ts_int)
             if self.first_timestamp is None or ts_int < self.first_timestamp:
                 self.first_timestamp = ts_int
             if self.last_timestamp is None or ts_int > self.last_timestamp:
@@ -215,6 +219,33 @@ def stream_metadata(path: Path, verbose: bool = False) -> Iterable[Dict]:
                 )
             if verbose and idx % 10000 == 0:
                 print(f"[info] Processed {idx} metadata records...", file=sys.stderr)
+
+
+def compute_run_segments(timestamps: List[int], gap_seconds: int = 300) -> List[Tuple[int, int, int]]:
+    """Compute run segments from sorted timestamps.
+
+    A run segment is a contiguous sequence of timestamps where gaps between
+    consecutive timestamps are <= gap_seconds. Returns list of tuples
+    (start_ts, end_ts, duration_seconds).
+    """
+    if not timestamps:
+        return []
+
+    ts_sorted = sorted(timestamps)
+    segments: List[Tuple[int, int, int]] = []
+    start = ts_sorted[0]
+    prev = start
+
+    for t in ts_sorted[1:]:
+        if t - prev > gap_seconds:
+            # gap larger than threshold -> close previous run
+            segments.append((start, prev, prev - start))
+            start = t
+        prev = t
+
+    # close final run
+    segments.append((start, prev, prev - start))
+    return segments
 
 
 def compute_token_stats(
@@ -275,6 +306,7 @@ def write_markdown(
     stats: CrawlStats,
     service_stats: Optional[Dict],
     token_stats: Optional[Dict[str, float]],
+    run_segments: Optional[List[Tuple[int, int, int]]] = None,
 ) -> None:
     lines: List[str] = []
     lines.append("# Crawl Statistics Report\n")
@@ -362,6 +394,18 @@ def write_markdown(
         lines.append(f"| Avg characters per file | {token_stats['avg_chars']:.2f} |\n")
         lines.append("\n")
 
+    # Run segmentation summary
+    if run_segments is not None:
+        total_run_seconds = sum(seg[2] for seg in run_segments)
+        lines.append("## Run Segments\n")
+        lines.append(f"- Number of runs: {len(run_segments)}\n")
+        lines.append(f"- Total runtime (sum of runs): {format_seconds(total_run_seconds)} ({total_run_seconds} s)\n")
+        lines.append("\n")
+        lines.append("| Run # | Start (epoch) | End (epoch) | Duration |\n| --- | ---: | ---: | ---: |\n")
+        for idx, (start, end, dur) in enumerate(run_segments, start=1):
+            lines.append(f"| {idx} | {start} | {end} | {format_seconds(dur)} ({dur}s) |\n")
+        lines.append("\n")
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("".join(lines), encoding="utf-8")
 
@@ -409,6 +453,7 @@ def print_console_summary(
     stats: CrawlStats,
     service_stats: Optional[Dict],
     token_stats: Optional[Dict[str, float]],
+    run_segments: Optional[List[Tuple[int, int, int]]] = None,
 ) -> None:
     print("=== Crawl Statistics ===")
     print(f"Total documents:  {stats.total_docs}")
@@ -461,6 +506,15 @@ def print_console_summary(
         print(f"Avg tokens / file     : {token_stats['avg_tokens']:.2f}")
         print(f"Avg chars / file      : {token_stats['avg_chars']:.2f}")
 
+    # Print run segmentation summary if available
+    if run_segments is not None:
+        total_run_seconds = sum(seg[2] for seg in run_segments)
+        print("\n-- Run Segments --")
+        print(f"Number of runs  : {len(run_segments)}")
+        print(f"Total run time  : {format_seconds(total_run_seconds)} ({total_run_seconds} s)")
+        for idx, (start, end, dur) in enumerate(run_segments, start=1):
+            print(f"Run {idx}: {start} → {end} (duration: {format_seconds(dur)})")
+
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
@@ -489,6 +543,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     service_stats = load_service_stats(service_stats_path)
 
+    # Compute run segments from metadata timestamps. If metadata was produced
+    # in multiple short runs, gaps longer than 5 minutes indicate separate runs.
+    run_segments: Optional[List[Tuple[int, int, int]]] = None
+
+    # default gap threshold: 5 minutes (300 seconds)
+    gap_threshold = 300
+
     token_stats = None
     if args.text_root:
         token_stats, token_warning = compute_token_stats(
@@ -500,10 +561,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if token_warning:
             print(f"[info] {token_warning}", file=sys.stderr)
 
-    print_console_summary(stats, service_stats, token_stats)
+    # Only compute runs if we have at least one timestamp collected
+    if getattr(stats, "timestamps", None):
+        run_segments = compute_run_segments(stats.timestamps, gap_seconds=gap_threshold)
+
+    print_console_summary(stats, service_stats, token_stats, run_segments)
 
     if args.markdown_output:
-        write_markdown(Path(args.markdown_output), stats, service_stats, token_stats)
+        write_markdown(Path(args.markdown_output), stats, service_stats, token_stats, run_segments=run_segments)
         print(f"\n[info] Markdown written to {args.markdown_output}")
 
     if args.csv_output:
