@@ -1,12 +1,13 @@
 # 1. Odovzdanie – Report k 31. 10. 2025
 
 ## 1.1 Cieľ projektu
-- **Problémová doména**: zhromaždiť a normalizovať dáta z GitHubu (repozitáre, topics, issues, pull requesty) so zameraním na výučbové Q&A scenáre pre wiki FIIT STU, pričom sa musí dodržať etické crawlovanie (robots.txt, user agent s kontaktom, nízky rate).
+- **Problémová doména**: zhromaždiť a normalizovať GitHub dáta (repozitáre, topics, issues, pull requesty) so zameraním na výučbové Q&A scenáre pre wiki FIIT STU; priorizované polia: hviezdičky, forky, jazyky/technológie, prispievatelia, PR, wiki/dokumentácia/README, licencie, projektové URL a releases – s dôrazom na etické crawlovanie (robots.txt, identifikovateľný user agent, nízky rate).
 - **Výsledok**: plnohodnotná pipeline _crawl → extrakcia → index → vyhľadávanie_ umožňujúca:
   - persistenciu HTML a metadát v `workspace/`,
   - text/entitnú extrakciu (TSV, README, preprocessed texty),
   - tvorbu ľahkého invertovaného indexu s viacnásobnými IDF metódami,
   - odpovede na otázky o popularite, licencovaní, dokumentácii a vývoji open-source projektov.
+- **Praktický use-case (Konzultácia 1)**: validácia Jellyfin ekosystému (`https://github.com/jellyfin/jellyfin`) – pipeline mapuje pluginy (napr. `metatube-community/jellyfin-plugin-metatube`), klientov (Swiftfin, Android projekty) a k nim pripája znalosti z wiki (`.NET`, `C#`, `FFmpeg`).
 
 ## 1.2 Zdrojové stránky a extrahované dáta
 | URL / doména | Popis obsahu | Extrahované atribúty (min. 5 ukážok) | Poznámky |
@@ -17,17 +18,26 @@
 | https://github.com/kubernetes/kubernetes | Kubernetes – container orchestration | - `STAR_COUNT: 118 008`<br>- `FORK_COUNT: 41 525`<br>- `LICENSE: Apache-2.0`<br>- `VERSION: 1.34.1`<br>- `README_SECTION: "Kubernetes (K8s) ... open source system for managing containerized applications"` | doc_id `8b452ba3…`; `page_type=repo_root`; dáta v `workspace/store/html/8b/45/...` a TSV. |
 | https://github.com/facebook/react | React – UI library | - `STAR_COUNT: 239 805`<br>- `FORK_COUNT: 49 593`<br>- `LICENSE: MIT`<br>- `VERSION: 19.2.0`<br>- `README_SECTION: "React is a JavaScript library for building user interfaces"` | doc_id `d5025a1…`; uložené v `workspace/store/html/d5/02/...`; entitné záznamy dostupné v TSV. |
 | https://github.com/nodejs/node | Node.js runtime | - `STAR_COUNT: 113 797`<br>- `FORK_COUNT: 33 490`<br>- `LICENSE: MIT`<br>- `VERSION: 22.0.0`<br>- `EMAIL: duhamelantoine1995@gmail.com` | doc_id `8c9f250c…`; HTML v `workspace/store/html/8c/9f/...`; entitné výstupy v `workspace/store/entities/entities.tsv`. |
+| https://github.com/metatube-community/jellyfin-plugin-metatube | MetaTube plug-in pre Jellyfin/Emby | - `STAR_COUNT: 3 816`<br>- `FORK_COUNT: 308`<br>- `LICENSE: MIT`<br>- `VERSION: 2025.1025.2000`<br>- README linky na `https://github.com/jellyfin/jellyfin` a klientov | doc_id `1bf2ee91…`; HTML v `workspace/store/html/1b/f2/...`; entitné výstupy v TSV (vrátane `URL` entít na Jellyfin server). |
 
 _(Ukážky pochádzajú z Task 3: extrakcia entít a textov – viď `workspace/store/entities/entities.tsv`, `workspace/store/text[-preprocessed]`)._
 
 ## 1.3 Q&A scenáre
-- **Scenár 1**: „Koľko hviezdičiek má python/cpython?“ → 69 369 hviezdičiek, 33 101 forkov (`STAR_COUNT`, `FORK_COUNT` v doc `d44f9b6…`).
-- **Scenár 2**: „Aké témy sa spájajú so SQLModel projektmi?“ → `react`, `python`, `docker`, `sqlmodel`, `typescript`, `fastapi`, `pydantic`, `postgresql`, `mlops`, `ai-agents` (TOPIC entity v doc `0002297e…`).
-- **Scenár 3**: „Aké správanie AST konštruktorov sa mení v issue #140196?“ → Od Pythonu 3.13 meníme defaulty (`optional` → `None`, `list` → `[]`, `expr_context` → `Load()`); text extrahovaný v doc `83ee85e7…`.
-- **Scenár 4**: „Kde nájdem licenčné informácie pre torvalds/linux?“ → Sidebar link `LICENSES/` + README sekcia `Copyright and License Information` (`LICENSE` entity v doc `df769559…`).
-- **Scenár 5**: „Koľko topic dokumentov máme oproti repo rootom?“ → Topics: 14 085; repo root: 9 465 (page-type breakdown v `docs/generated/crawl_stats.md`).
-- **Scenár 6**: „Ktorý user agent použil crawler pri topic/sqlmodel?“ → `Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0)` (metadáta doc `0002297e…` v `crawl_metadata.jsonl`).
-- **Scenár 7**: „Ako rýchlo odpovedal server pri python/cpython?“ → Latencia 863.3 ms, 381.76 KB HTML (`crawl_metadata.jsonl`, doc `d44f9b6…`).
+- **Otázka 1**: „Nájdi mi open-source softvér pre domácu multimediálnu knižnicu.“  
+  **Odpoveď**: `metatube-community/jellyfin-plugin-metatube` (3 816 ★, 308 forks; doc `1bf2ee91…`) je súčasť Jellyfin ekosystému a README obsahuje priamy odkaz na server `https://github.com/jellyfin/jellyfin` (zachytený ako `URL` entita v doc `020b94b9…` – `jaywcjlove/awesome-mac`).  
+  **Súvisiace zdroje**: wiki `.NET`, `FFmpeg` pre technický kontext a plánované prepojenie na Emby.
+- **Otázka 2**: „V akom jazyku je napísaný Jellyfin?“  
+  **Odpoveď**: Jellyfin server je primárne v C#/.NET; pipeline poskytuje potrebné odkazy (doc `020b94b9…` → Jellyfin URL) a wiki cross-linky na `.NET` (`https://sk.wikipedia.org/wiki/.NET`) a `C#` (`https://en.wikipedia.org/wiki/C_Sharp_(programming_language)`).
+- **Otázka 3**: „Má Jellyfin aplikácie pre mobilné zariadenia?“  
+  **Odpoveď**: Áno – dataset zachytáva projekty ako `Swiftfin : Jellyfin Client` (doc `2ca6f462…`, `README_SECTION` v katalógu open-source iOS apps) a Android klientov (`Cinetry` v doc `566c758a…`).  
+  **Doplňujúce informácie**: README `metatube-community/jellyfin-plugin-metatube` uvádza ďalšie oficiálne klienty.
+- **Otázka 4**: „Aké jazyky sa používajú v pôvodnom Linux Kernel?“  
+  **Odpoveď**: Sekcia „Languages“ na `torvalds/linux` (doc `df769559…`) uvádza `C 98.1%`, `Assembly 0.7%`, `Shell 0.4%`, `C++ 0.3%`, `Makefile 0.2%`, `Rust 0.2%`, `Other 0.1%`.  
+  **Súvisiace odkazy**: `https://sk.wikipedia.org/wiki/Linus_Torvalds` pre širší kontext.
+- **Otázka 5**: „Kto stojí za vývojom Linuxu?“  
+  **Odpoveď**: Repozitár `torvalds/linux` patrí Linusovi Torvaldsovi; wiki `https://sk.wikipedia.org/wiki/Linus_Torvalds` sumarizuje jeho úlohu.
+- **Otázka 6**: „Aký iný softvér Linus vytvoril?“  
+  **Odpoveď**: Linus Torvalds inicioval aj `Git`; odkazujeme na `https://sk.wikipedia.org/wiki/Git_(softv%C3%A9r)` a súčasne uchovávame tieto linky v prílohách.
 
 ## 1.4 Použité technológie
 | Vrstva | Nástroj / knižnica | Odôvodnenie |
@@ -77,6 +87,7 @@ flowchart TD
 | `df76955945858d1597325eef7ee46d4f02ff2c11bc260806ccfec4c9aa79272d` | https://github.com/torvalds/linux | 200 | repo_root | 305.07 KB | Latencia 646.7 ms, UA `ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)`, hash `df769559…`. |
 | `0002297ed0450b8dbb47cfd695075755b36ce04247e6e47aa6482dbb5018790b` | https://github.com/topics/sqlmodel | 200 | topic | 491.03 KB | Latencia 1120.3 ms, UA `Mozilla/5.0 … Firefox/47.0`, rad `workspace/store/html/00/02/...html`. |
 | `83ee85e79784532a27bbfc8b7c363a2f576b0d44a6c3705223534c4913030e36` | https://github.com/python/cpython/issues/140196 | 200 | issues | 236.94 KB | Latencia 708.5 ms, UA rotácia `ResearchCrawlerBotVINF/2.0`, issue text v preprocessed výstupe. |
+| `1bf2ee9172a1a5e72e84551a36f61772bc95af9a72e9077323762038015a1d8c` | https://github.com/metatube-community/jellyfin-plugin-metatube | 200 | repo_root | 284.48 KB | Latencia 376.1 ms, UA `ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)`, README prepája Jellyfin server a klientov. |
 
 ## 1.7 Hlavičky, timeouty, sleep
 - **Zhrnutie**:
@@ -156,7 +167,19 @@ def extract_urls(doc_id: str, html_content: str, text_content: str) -> List[Enti
 
     return results
 ```
-_(Zdroják referencovaný na wiki: `crawler/extractor.py`, `extractor/entity_extractors.py`.)_
+```python
+# extractor/regexes.py:18,61
+_STAR_COUNTER_RE = re.compile(
+    r'<span\s+id="repo-stars-counter-star"[^>]*?title="([0-9,]+)"',
+    re.IGNORECASE | re.DOTALL
+)
+
+_TOPIC_TAG_RE = re.compile(
+    r'<a\s+[^>]*?(?:class="[^"]*?topic-tag[^"]*?"|data-octo-click="topic")[^>]*?>([\w\-]+)</a>',
+    re.IGNORECASE | re.DOTALL
+)
+```
+_(Zdroják referencovaný na wiki: `crawler/extractor.py`, `extractor/entity_extractors.py`, `extractor/regexes.py`.)_
 
 ## 1.10 Indexer a index
 - **Popis TF výpočtu**: `indexer/ingest.py` vytvára `term_freq` (raw counts), scoring v `indexer/search.py` používa `tf_weight = 1 + log(tf)` a rovnako pre query (`1 + log(q_tf)`).
@@ -206,6 +229,7 @@ _(Zdroj: `docs/generated/index_comparison.md` – generované `python -m indexer
 - **Token counts (tiktoken)**: pipeline pripravený (`indexer.build --use-tokens`), no nespustené kvôli výkonu – viď README.
 - **ZIP balíček**: podľa pôvodného návrhu `zip -r submission.zip crawler extractor indexer tools docs config.yaml main.py requirements.txt workspace/store/entities/entities.tsv docs/generated`.
 - **Reprodukcia**: `README.md` → príkazy na aktiváciu venv, crawl, extrakciu, index build, testy.
+- **Wiki cross-linky (Konzultácia 1)**: `.NET` (`https://sk.wikipedia.org/wiki/.NET`), `C#` (`https://en.wikipedia.org/wiki/C_Sharp_(programming_language)`), `FFmpeg` (`https://en.wikipedia.org/wiki/FFmpeg`), `Linus Torvalds` (`https://sk.wikipedia.org/wiki/Linus_Torvalds`), `Git` (`https://sk.wikipedia.org/wiki/Git_(softv%C3%A9r)`).
 
 ---
 _Späť: [2. Konzultácia](./konzultacia-2) · Ďalej: [3. Konzultácia](./konzultacia-3)_ (odkazy na wiki sa doplnia pri publikovaní).
