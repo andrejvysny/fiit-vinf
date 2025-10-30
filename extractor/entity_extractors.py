@@ -1,18 +1,3 @@
-"""Entity extraction functions using regex patterns.
-
-This module contains functions to extract various entity types from HTML and text:
-- GitHub metadata (stars, forks, language stats)
-- README sections
-- Licenses
-- Topics
-- Import statements
-- URLs
-- Issue references
-- Versions
-- Emails
-- Code language hints
-"""
-
 import json
 import re
 from typing import Dict, List, Optional, Tuple
@@ -25,15 +10,6 @@ EntityRow = Tuple[str, str, str, str]  # (doc_id, type, value, offsets_json)
 
 
 def extract_star_count(doc_id: str, html_content: str) -> List[EntityRow]:
-    """Extract star count from GitHub HTML.
-
-    Args:
-        doc_id: Document identifier
-        html_content: Raw HTML string
-
-    Returns:
-        List of entity rows (doc_id, "STAR_COUNT", count_str, offsets_json)
-    """
     results = []
 
     for pattern in regexes.get_star_regexes():
@@ -41,7 +17,6 @@ def extract_star_count(doc_id: str, html_content: str) -> List[EntityRow]:
         if not matches:
             continue
 
-        # Take the first match
         match = matches[0]
         raw_count = match.group(1).strip()
 
@@ -62,7 +37,7 @@ def extract_star_count(doc_id: str, html_content: str) -> List[EntityRow]:
             raw_count,
             json.dumps(offsets, separators=(',', ':'))
         ))
-        break  # Only take first successful match
+        break
 
     return results
 
