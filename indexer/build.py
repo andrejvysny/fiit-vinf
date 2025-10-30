@@ -1,16 +1,9 @@
-"""
-CLI entry point for building a JSONL-based inverted index.
-
-Example:
-
-    python -m indexer.build --input workspace/data/text --output workspace/index/default
-"""
-
 from __future__ import annotations
 
 import argparse
 import math
 import sys
+import logging
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -34,7 +27,15 @@ def _load_token_counter(model: str) -> Callable[[str], int]:
         encoding = tiktoken.encoding_for_model(model)
 
     def counter(text: str) -> int:
-        return len(encoding.encode(text or ""))
+        payload = text or ""
+        try:
+            return len(encoding.encode(payload, disallowed_special=()))
+        except ValueError as exc:  # pragma: no cover - defensive fallback
+            logging.getLogger("indexer.tiktoken").warning(
+                "tiktoken rejected input, falling back to strict token count: %s",
+                exc,
+            )
+            return len(encoding.encode(payload, allowed_special="all"))
 
     return counter
 

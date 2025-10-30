@@ -19,6 +19,7 @@ class Document:
     title: str
     path: Path
     length: int
+    tokenize_count: Optional[int] = None
     token_count: Optional[int] = None
 
 
@@ -29,6 +30,7 @@ class SearchResult:
     title: str
     path: Path
     length: int
+    tokenize_count: Optional[int]
     token_count: Optional[int]
     matched_terms: Dict[str, int]
 
@@ -77,12 +79,22 @@ class InvertedIndex:
             if not line.strip():
                 continue
             payload = json.loads(line)
+            tokenize_count = payload.get("tokenize_count")
+            if tokenize_count is not None:
+                try:
+                    tokenize_count = int(tokenize_count)
+                except (TypeError, ValueError):
+                    tokenize_count = None
+            token_count = payload.get("tiktoken_token_count")
+            if token_count is None:
+                token_count = payload.get("token_count")
             doc = Document(
                 doc_id=int(payload["doc_id"]),
                 title=str(payload.get("title", "")),
                 path=Path(payload.get("path", "")),
                 length=int(payload.get("length", 0)),
-                token_count=payload.get("token_count"),
+                tokenize_count=tokenize_count,
+                token_count=token_count,
             )
             documents[doc.doc_id] = doc
         return documents
@@ -189,6 +201,7 @@ class InvertedIndex:
                     title=doc.title,
                     path=doc.path,
                     length=doc.length,
+                    tokenize_count=doc.tokenize_count,
                     token_count=doc.token_count,
                     matched_terms=dict(sorted(matched_terms[doc_id].items())),
                 )

@@ -33,8 +33,9 @@ def write_docs(output_dir: Path, docs: Sequence[DocumentRecord]) -> None:
             "title": record.title,
             "length": record.length,
         }
+        payload["tokenize_count"] = record.length
         if record.token_count is not None:
-            payload["token_count"] = record.token_count
+            payload["tiktoken_token_count"] = record.token_count
         lines.append(json.dumps(payload, ensure_ascii=False))
     _atomic_write(path, "\n".join(lines) + ("\n" if lines else ""))
 

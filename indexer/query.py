@@ -17,7 +17,7 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Query the inverted index.")
     parser.add_argument(
         "--index",
-        default="workspace/index/default",
+        default="workspace/store/index/default",
         help="Path to the index directory (default: %(default)s).",
     )
     parser.add_argument(
@@ -73,8 +73,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             f"{term}({tf})" for term, tf in result.matched_terms.items()
         )
         metadata = f"len={result.length}"
+        if result.tokenize_count is not None:
+            metadata += f", tokenize={result.tokenize_count}"
         if result.token_count is not None:
-            metadata += f", tokens={result.token_count}"
+            metadata += f", tiktoken={result.token_count}"
         print(
             f"{rank:>2}. score={result.score:.4f} doc={result.doc_id} {metadata} | {result.title}"
         )
