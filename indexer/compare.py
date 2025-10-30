@@ -23,7 +23,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--index",
-        default="workspace/index/default",
+        default="workspace/store/index/default",
         help="Path to the index directory (default: %(default)s).",
     )
     parser.add_argument(
