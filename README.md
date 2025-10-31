@@ -25,7 +25,7 @@ All commands in this README assume the virtual environment is active.
 ## Architecture Overview
 
 ```
-seeds.txt ──► crawler (main.py)
+config.yaml ──► python -m crawler
               │
               ├─ HTML snapshots      → workspace/store/html/
               ├─ Crawl metadata      → workspace/metadata/crawl_metadata.jsonl
@@ -61,18 +61,16 @@ Each module exposes its own CLI entry point so you can run the stages independen
 ### Running the crawler
 
 ```bash
-python3 main.py --config config.yaml --seeds seeds.txt
+python -m crawler --config config.yaml
 ```
 
 Key flags:
 
 - `--config` – path to a YAML config (defaults to `config.yaml`).
-- `--seeds` – newline-separated list of seed URLs (defaults to `seeds.txt`).
 
 ### Inputs
 
-- `config.yaml` (or custom path) – defines workspace location, user-agents, scope rules, rate limits, storage paths, and logging settings. See `crawler/config.py` for the full schema.
-- `seeds.txt` – starting URLs (comments allowed with `#`).
+- `config.yaml` (or custom path) – defines workspace location, seeds, user-agents, scope rules, rate limits, storage paths, and logging settings. See `crawler/config.py` for the full schema.
 
 ### Outputs
 
@@ -237,7 +235,7 @@ If you update regexes or scope rules, add fixtures under `tests_regex_samples/` 
 ## Operational Tips
 
 - Keep contact information in `config.yaml` user-agents to comply with GitHub’s crawling guidelines.
-- Start with a trimmed `seeds.txt` list and inspect `workspace/logs/crawler.log` plus `workspace/state/service_stats.json` before scaling up.
+- Start with a trimmed `config.yaml` seeds list and inspect `workspace/logs/crawler.log` plus `workspace/state/service_stats.json` before scaling up.
 - Monitor storage consumption via the service stats JSON (`html_storage_bytes` and `html_files_count` fields).
 - Use `tools/` helpers (e.g. `python3 tools/crawl_stats.py`) to inspect run-time metrics when available.
 - When adjusting scope patterns, validate against fixture HTML and run targeted crawls to ensure the frontier grows as expected.

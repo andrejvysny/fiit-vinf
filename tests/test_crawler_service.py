@@ -22,6 +22,7 @@ def make_config(workspace: str) -> CrawlerScraperConfig:
         run_id="test-run",
         workspace=workspace,
         user_agent="TestAgent/1.0",
+        seeds=["https://example.com"],
         robots=RobotsConfig(user_agent="TestAgent/1.0"),
         scope=ScopeConfig(allowed_hosts=["github.com"]),
         limits=LimitsConfig(),

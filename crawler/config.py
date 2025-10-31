@@ -121,6 +121,7 @@ class CrawlerScraperConfig:
     user_agent_rotation_size: int = 1
     accept_language: str = "en"
     accept_encoding: str = "br, gzip"
+    seeds: List[str] = field(default_factory=list)
     
     robots: RobotsConfig = None
     scope: ScopeConfig = None
@@ -146,6 +147,10 @@ class CrawlerScraperConfig:
             raise ValueError("workspace cannot be empty")
         if self.proxies is None:
             self.proxies = ProxyConfig()
+        # Normalize seeds list and ensure at least one entry
+        self.seeds = [seed.strip() for seed in self.seeds if seed and seed.strip()]
+        if not self.seeds:
+            raise ValueError("seeds cannot be empty")
 
     def get_workspace_path(self) -> Path:
         return Path(self.workspace).resolve()
@@ -168,6 +173,9 @@ class CrawlerScraperConfig:
         ua = data.get('user_agent', '')
         uas = data.get('user_agents', []) or []
         ua_rotation = data.get('user_agent_rotation_size', 1)
+        seeds = data.get('seeds', []) or []
+        if not isinstance(seeds, list):
+            raise ValueError("seeds must be a list in the configuration file")
 
         config = cls(
             run_id=data['run_id'],
@@ -177,6 +185,7 @@ class CrawlerScraperConfig:
             user_agent_rotation_size=ua_rotation,
             accept_language=data.get('accept_language', 'en'),
             accept_encoding=data.get('accept_encoding', 'br, gzip'),
+            seeds=seeds,
             robots=robots_cfg,
             scope=scope_cfg,
             limits=limits_cfg,
