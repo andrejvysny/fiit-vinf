@@ -24,6 +24,8 @@ class DocumentRecord:
     title: str
     tokens: List[str]
     term_freq: Dict[str, int]
+    # Positions of each term in the document: term -> list of token indices
+    term_positions: Dict[str, List[int]]
     token_count: Optional[int] = None
 
     @property
@@ -55,14 +57,24 @@ def iter_text_files(input_root: Path) -> Iterator[Path]:
         yield path
 
 
-def load_documents(
+"""The eager `load_documents` helper has been removed to enforce streaming-only indexing.
+
+Use `iter_document_records(input_root, limit=None, token_counter=None)` to iterate
+documents in a memory-efficient manner.
+"""
+
+
+def iter_document_records(
     input_root: Path,
     limit: Optional[int] = None,
     *,
     token_counter: Optional[Callable[[str], int]] = None,
-) -> List[DocumentRecord]:
-    """Load documents from ``input_root`` into in-memory records."""
-    records: List[DocumentRecord] = []
+) -> Iterator[DocumentRecord]:
+    """Yield DocumentRecord objects one-by-one (streaming).
+
+    This mirrors `load_documents` but avoids building the full list in memory.
+    Doc IDs are assigned sequentially starting from 0.
+    """
     for idx, path in enumerate(iter_text_files(input_root)):
         if limit is not None and idx >= limit:
             break
@@ -74,28 +86,41 @@ def load_documents(
 
         token_count = token_counter(text) if token_counter is not None else None
 
+        positions: Dict[str, List[int]] = {}
+        for pos, tok in enumerate(tokens):
+            bucket = positions.setdefault(tok, [])
+            bucket.append(pos)
+
         record = DocumentRecord(
             doc_id=idx,
             path=path,
             title=title,
             tokens=tokens,
             term_freq=dict(frequencies),
+            term_positions=positions,
             token_count=token_count,
         )
-        records.append(record)
-
-    return records
+        yield record
 
 
-def build_vocabulary(docs: Sequence[DocumentRecord]) -> Dict[str, Dict[int, int]]:
-    """Construct postings from the loaded documents.
+def build_vocabulary(docs: Sequence[DocumentRecord]) -> Dict[str, Dict[int, List[int]]]:
+    """Construct postings from the loaded documents using token positions.
 
     Returns:
-        Mapping term -> {doc_id: term_frequency}
+        Mapping term -> {doc_id: [positions]}
     """
-    postings: Dict[str, Dict[int, int]] = {}
+    postings: Dict[str, Dict[int, List[int]]] = {}
     for doc in docs:
-        for term, tf in doc.term_freq.items():
+        # prefer explicit term_positions if available
+        positions_map = getattr(doc, "term_positions", None)
+        if positions_map is None:
+            # fallback: reconstruct positions from token list
+            positions_map = {}
+            for pos, tok in enumerate(doc.tokens):
+                bucket = positions_map.setdefault(tok, [])
+                bucket.append(pos)
+
+        for term, positions in positions_map.items():
             bucket = postings.setdefault(term, {})
-            bucket[doc.doc_id] = tf
+            bucket[doc.doc_id] = list(positions)
     return postings

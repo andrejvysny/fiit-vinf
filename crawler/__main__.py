@@ -110,7 +110,7 @@ def main() -> None:
         "--config",
         required=False,
         help="Path to unified config YAML file",
-        default="config.yaml",
+        default="config.yml",
     )
 
     args = parser.parse_args()

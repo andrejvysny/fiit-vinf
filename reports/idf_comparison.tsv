@@ -1,0 +1,61 @@
+query	method	rank	doc_id	score	title
+github crawler	classic	1	650	18.453892	crawler · GitHub Topics · GitHub
+github crawler	classic	2	2762	15.570110	web-scraping · GitHub Topics · GitHub
+github crawler	classic	3	478	14.564295	scrapy · GitHub Topics · GitHub
+github crawler	classic	4	2308	13.599112	apify · GitHub Topics · GitHub
+github crawler	classic	5	140	12.324592	news-articles · GitHub Topics · GitHub
+github crawler	smoothed	1	650	26.694146	crawler · GitHub Topics · GitHub
+github crawler	smoothed	2	2762	23.033126	web-scraping · GitHub Topics · GitHub
+github crawler	smoothed	3	478	21.780287	scrapy · GitHub Topics · GitHub
+github crawler	smoothed	4	2308	20.578059	apify · GitHub Topics · GitHub
+github crawler	smoothed	5	140	18.990521	news-articles · GitHub Topics · GitHub
+github crawler	probabilistic	1	650	18.415694	crawler · GitHub Topics · GitHub
+github crawler	probabilistic	2	2762	15.537963	web-scraping · GitHub Topics · GitHub
+github crawler	probabilistic	3	478	14.534263	scrapy · GitHub Topics · GitHub
+github crawler	probabilistic	4	2308	13.571109	apify · GitHub Topics · GitHub
+github crawler	probabilistic	5	140	12.299267	news-articles · GitHub Topics · GitHub
+github crawler	max	1	650	2.293757	crawler · GitHub Topics · GitHub
+github crawler	max	2	2762	1.935313	web-scraping · GitHub Topics · GitHub
+github crawler	max	3	478	1.810293	scrapy · GitHub Topics · GitHub
+github crawler	max	4	2308	1.690324	apify · GitHub Topics · GitHub
+github crawler	max	5	140	1.531906	news-articles · GitHub Topics · GitHub
+async http client	classic	1	1146	31.313276	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+async http client	classic	2	605	23.180620	GitHub - dexteryy/spellbook-of-modern-webdev: A Big Picture, Thesaurus, and Taxonomy of Modern JavaScript Web Development
+async http client	classic	3	2927	22.681115	GitHub - cheatsnake/backend-cheats: 📃 White paper for Backend developers
+async http client	classic	4	1750	21.498256	GitHub - axios/axios: Promise based HTTP client for the browser and node.js
+async http client	classic	5	1991	21.027885	GitHub - nodejs/undici: An HTTP/1.1 client, written from scratch for Node.js
+async http client	smoothed	1	1146	46.605311	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+async http client	smoothed	2	605	34.201317	GitHub - dexteryy/spellbook-of-modern-webdev: A Big Picture, Thesaurus, and Taxonomy of Modern JavaScript Web Development
+async http client	smoothed	3	2927	33.960674	GitHub - cheatsnake/backend-cheats: 📃 White paper for Backend developers
+async http client	smoothed	4	1750	31.832888	GitHub - axios/axios: Promise based HTTP client for the browser and node.js
+async http client	smoothed	5	339	31.350514	GitHub - Vedenin/useful-java-links: A list of useful Java frameworks, libraries, software and hello worlds examples
+async http client	probabilistic	1	1146	31.296480	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+async http client	probabilistic	2	605	23.167370	GitHub - dexteryy/spellbook-of-modern-webdev: A Big Picture, Thesaurus, and Taxonomy of Modern JavaScript Web Development
+async http client	probabilistic	3	2927	22.669456	GitHub - cheatsnake/backend-cheats: 📃 White paper for Backend developers
+async http client	probabilistic	4	1750	21.486212	GitHub - axios/axios: Promise based HTTP client for the browser and node.js
+async http client	probabilistic	5	1991	21.016357	GitHub - nodejs/undici: An HTTP/1.1 client, written from scratch for Node.js
+async http client	max	1	1146	3.892136	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+async http client	max	2	605	2.881274	GitHub - dexteryy/spellbook-of-modern-webdev: A Big Picture, Thesaurus, and Taxonomy of Modern JavaScript Web Development
+async http client	max	3	2927	2.819187	GitHub - cheatsnake/backend-cheats: 📃 White paper for Backend developers
+async http client	max	4	1750	2.672162	GitHub - axios/axios: Promise based HTTP client for the browser and node.js
+async http client	max	5	1991	2.613696	GitHub - nodejs/undici: An HTTP/1.1 client, written from scratch for Node.js
+repository metadata	classic	1	1293	10.007374	GitHub - terraform-google-modules/terraform-google-kubernetes-engine: Configures opinionated GKE clusters
+repository metadata	classic	2	2811	9.562154	GitHub - punkpeye/awesome-mcp-servers: A collection of MCP servers.
+repository metadata	classic	3	1146	8.395556	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+repository metadata	classic	4	121	8.360393	GitHub - ARPSyndicate/awesome-intelligence: A collaboratively curated list of awesome Open-Source Intelligence (OSINT) Resources
+repository metadata	classic	5	2228	8.360393	GitHub - slimtoolkit/slim: Slim(toolkit): Don't change anything in your container image and minify it by up to 30x (and for compiled languages even more) making it secure too! (free and open source)
+repository metadata	smoothed	1	2811	16.230221	GitHub - punkpeye/awesome-mcp-servers: A collection of MCP servers.
+repository metadata	smoothed	2	1293	15.250034	GitHub - terraform-google-modules/terraform-google-kubernetes-engine: Configures opinionated GKE clusters
+repository metadata	smoothed	3	1146	14.372243	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+repository metadata	smoothed	4	121	14.219310	GitHub - ARPSyndicate/awesome-intelligence: A collaboratively curated list of awesome Open-Source Intelligence (OSINT) Resources
+repository metadata	smoothed	5	2228	14.219310	GitHub - slimtoolkit/slim: Slim(toolkit): Don't change anything in your container image and minify it by up to 30x (and for compiled languages even more) making it secure too! (free and open source)
+repository metadata	probabilistic	1	1293	10.000489	GitHub - terraform-google-modules/terraform-google-kubernetes-engine: Configures opinionated GKE clusters
+repository metadata	probabilistic	2	2811	9.556184	GitHub - punkpeye/awesome-mcp-servers: A collection of MCP servers.
+repository metadata	probabilistic	3	1146	8.390360	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+repository metadata	probabilistic	4	121	8.355185	GitHub - ARPSyndicate/awesome-intelligence: A collaboratively curated list of awesome Open-Source Intelligence (OSINT) Resources
+repository metadata	probabilistic	5	2228	8.355185	GitHub - slimtoolkit/slim: Slim(toolkit): Don't change anything in your container image and minify it by up to 30x (and for compiled languages even more) making it secure too! (free and open source)
+repository metadata	max	1	1293	1.243883	GitHub - terraform-google-modules/terraform-google-kubernetes-engine: Configures opinionated GKE clusters
+repository metadata	max	2	2811	1.188544	GitHub - punkpeye/awesome-mcp-servers: A collection of MCP servers.
+repository metadata	max	3	1146	1.043540	GitHub - avelino/awesome-go: A curated list of awesome Go frameworks, libraries and software
+repository metadata	max	4	121	1.039169	GitHub - ARPSyndicate/awesome-intelligence: A collaboratively curated list of awesome Open-Source Intelligence (OSINT) Resources
+repository metadata	max	5	2228	1.039169	GitHub - slimtoolkit/slim: Slim(toolkit): Don't change anything in your container image and minify it by up to 30x (and for compiled languages even more) making it secure too! (free and open source)

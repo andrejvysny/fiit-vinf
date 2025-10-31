@@ -6,80 +6,16 @@ to plain text without DOM parsing.
 """
 
 import html
-import re
-from typing import Tuple
+from typing import Pattern, Tuple
 
+from extractor import regexes
 
-# GitHub-specific chrome patterns (derived from sample HTML inspection)
-# These patterns target common navigation and UI elements
-GITHUB_CHROME_PATTERNS = [
-    # Skip to content link
-    re.compile(r'<a[^>]*?href="#[^"]*?skip[^"]*?"[^>]*?>.*?</a>', re.IGNORECASE | re.DOTALL),
-
-    # Global header and navigation
-    re.compile(r'<header[^>]*?class="[^"]*?(?:Header|AppHeader|header)[^"]*?"[^>]*?>.*?</header>', re.IGNORECASE | re.DOTALL),
-
-    # Navigation bars
-    re.compile(r'<nav[^>]*?(?:class="[^"]*?(?:UnderlineNav|navigation|nav-bar)[^"]*?"|role="navigation")[^>]*?>.*?</nav>', re.IGNORECASE | re.DOTALL),
-
-    # Sidebar elements
-    re.compile(r'<(?:div|aside)[^>]*?class="[^"]*?(?:sidebar|Sidebar)[^"]*?"[^>]*?>.*?</(?:div|aside)>', re.IGNORECASE | re.DOTALL),
-
-    # Footer
-    re.compile(r'<footer[^>]*?>.*?</footer>', re.IGNORECASE | re.DOTALL),
-
-    # Breadcrumbs
-    re.compile(r'<nav[^>]*?aria-label="[^"]*?[Bb]readcrumb[^"]*?"[^>]*?>.*?</nav>', re.IGNORECASE | re.DOTALL),
-
-    # Command palette and filters
-    re.compile(r'<div[^>]*?class="[^"]*?(?:command-bar|filter-bar|CommandBar)[^"]*?"[^>]*?>.*?</div>', re.IGNORECASE | re.DOTALL),
-
-    # Pagination
-    re.compile(r'<div[^>]*?class="[^"]*?pagination[^"]*?"[^>]*?>.*?</div>', re.IGNORECASE | re.DOTALL),
-]
-
-# Block-level elements to remove entirely
-REMOVE_TAGS_RE = re.compile(
-    r'<(script|style|iframe|canvas|svg|noscript|template|form|dialog|input|button|select|textarea)[^>]*?>.*?</\1>',
-    re.IGNORECASE | re.DOTALL
-)
-
-# Self-closing tags to remove
-SELF_CLOSING_RE = re.compile(
-    r'<(?:meta|link|base|input|img|br|hr|area|embed|param|source|track|wbr)[^>]*?/?>',
-    re.IGNORECASE
-)
-
-# HTML comments
-COMMENT_RE = re.compile(r'<!--.*?-->', re.DOTALL)
-
-# DOCTYPE
-DOCTYPE_RE = re.compile(r'<!DOCTYPE[^>]*?>', re.IGNORECASE | re.DOTALL)
-
-# Block-level tags that should become newlines
-BLOCK_TAGS_RE = re.compile(
-    r'</?(?:p|div|section|article|main|h[1-6]|pre|blockquote|li|ul|ol|'
-    r'table|tr|thead|tbody|tfoot|th|td|dl|dt|dd|address|figcaption|figure|'
-    r'header|footer|aside|nav)[^>]*?>',
-    re.IGNORECASE
-)
-
-# BR and HR tags
-BR_HR_RE = re.compile(r'<(?:br|hr)\s*/?>', re.IGNORECASE)
-
-# Generic tag remover (catch-all for remaining tags)
-TAG_RE = re.compile(r'<[^>]+>')
-
-# Whitespace normalization patterns
-MULTI_SPACE_RE = re.compile(r'[ \t\f\v]+')
-AROUND_NEWLINE_RE = re.compile(r'[ \t\f\v]*\n[ \t\f\v]*')
-MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
 
 # Minified code detection (single lines longer than this are likely minified)
 MAX_LINE_LENGTH = 5000
 
 
-def strip_iteratively(text: str, pattern: re.Pattern) -> str:
+def strip_iteratively(text: str, pattern: Pattern[str]) -> str:
     """Apply a regex pattern repeatedly until no more matches.
 
     This is necessary for nested structures like <nav><nav>...</nav></nav>
@@ -91,6 +27,25 @@ def strip_iteratively(text: str, pattern: re.Pattern) -> str:
         if count == 0:
             break
     return text
+
+
+def remove_non_content_tags(html_content: str) -> str:
+    """Remove script/style blocks and metadata tags that are never user-facing."""
+    if not html_content:
+        return ''
+
+    working = html_content
+    remove_tags_re = regexes.get_html_remove_tags_regex()
+    comment_re = regexes.get_html_comment_regex()
+    doctype_re = regexes.get_html_doctype_regex()
+    self_closing_re = regexes.get_html_self_closing_regex()
+
+    working = strip_iteratively(working, remove_tags_re)
+    working = comment_re.sub(' ', working)
+    working = doctype_re.sub(' ', working)
+    working = self_closing_re.sub(' ', working)
+
+    return working
 
 
 def strip_boilerplate_html(html_content: str) -> str:
@@ -114,21 +69,12 @@ def strip_boilerplate_html(html_content: str) -> str:
     if not html_content:
         return ''
 
-    working = html_content
-
-    # Remove scripts, styles, and other non-content blocks
-    working = strip_iteratively(working, REMOVE_TAGS_RE)
+    working = remove_non_content_tags(html_content)
+    chrome_patterns = regexes.get_html_chrome_patterns()
 
     # Remove GitHub-specific chrome patterns
-    for pattern in GITHUB_CHROME_PATTERNS:
+    for pattern in chrome_patterns:
         working = strip_iteratively(working, pattern)
-
-    # Remove comments and DOCTYPE
-    working = COMMENT_RE.sub(' ', working)
-    working = DOCTYPE_RE.sub(' ', working)
-
-    # Remove self-closing metadata tags
-    working = SELF_CLOSING_RE.sub(' ', working)
 
     return working
 
@@ -157,16 +103,25 @@ def html_to_text(html_content: str, strip_boilerplate: bool = True) -> str:
 
     working = html_content
 
-    # Step 1: Remove boilerplate if requested
+    # Step 1: Remove boilerplate if requested, otherwise strip only non-content tags
     if strip_boilerplate:
         working = strip_boilerplate_html(working)
+    else:
+        working = remove_non_content_tags(working)
+
+    block_tags_re = regexes.get_html_block_tags_regex()
+    br_hr_re = regexes.get_html_br_hr_regex()
+    generic_tag_re = regexes.get_html_generic_tag_regex()
+    multi_space_re = regexes.get_html_multi_space_regex()
+    around_newline_re = regexes.get_html_around_newline_regex()
+    multi_newline_re = regexes.get_html_multi_newline_regex()
 
     # Step 2: Convert block-level tags to newlines
-    working = BLOCK_TAGS_RE.sub('\n', working)
-    working = BR_HR_RE.sub('\n', working)
+    working = block_tags_re.sub('\n', working)
+    working = br_hr_re.sub('\n', working)
 
     # Step 3: Remove all remaining tags
-    working = TAG_RE.sub(' ', working)
+    working = generic_tag_re.sub(' ', working)
 
     # Step 4: Unescape HTML entities
     working = html.unescape(working)
@@ -176,8 +131,8 @@ def html_to_text(html_content: str, strip_boilerplate: bool = True) -> str:
     working = working.replace('\r\n', '\n').replace('\r', '\n')
 
     # Step 6: Normalize whitespace
-    working = MULTI_SPACE_RE.sub(' ', working)
-    working = AROUND_NEWLINE_RE.sub('\n', working)
+    working = multi_space_re.sub(' ', working)
+    working = around_newline_re.sub('\n', working)
 
     # Step 7: Split into lines and filter
     lines = working.split('\n')
@@ -203,7 +158,7 @@ def html_to_text(html_content: str, strip_boilerplate: bool = True) -> str:
     text = '\n'.join(cleaned_lines)
 
     # Final whitespace normalization
-    text = MULTI_NEWLINE_RE.sub('\n\n', text)
+    text = multi_newline_re.sub('\n\n', text)
 
     return text.strip()
 

@@ -40,18 +40,41 @@ def write_docs(output_dir: Path, docs: Sequence[DocumentRecord]) -> None:
     _atomic_write(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
+def append_docs(output_dir: Path, docs: Sequence[DocumentRecord]) -> None:
+    """Append document metadata lines to docs.jsonl (non-atomic append).
+
+    Used by chunked indexing to avoid holding all documents in memory.
+    """
+    path = output_dir / "docs.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        for record in docs:
+            payload = {
+                "doc_id": record.doc_id,
+                "path": str(record.path),
+                "title": record.title,
+                "length": record.length,
+            }
+            payload["tokenize_count"] = record.length
+            if record.token_count is not None:
+                payload["tiktoken_token_count"] = record.token_count
+            fh.write(json.dumps(payload, ensure_ascii=False))
+            fh.write("\n")
+
+
 def write_postings(
     output_dir: Path,
-    vocabulary: Mapping[str, Mapping[int, int]],
+    vocabulary: Mapping[str, Mapping[int, Sequence[int]]],
     idf_tables: Mapping[str, Mapping[str, float]],
 ) -> None:
     path = output_dir / "postings.jsonl"
     lines: List[str] = []
     for term in sorted(vocabulary.keys()):
-        postings = [
-            {"doc_id": doc_id, "tf": tf}
-            for doc_id, tf in sorted(vocabulary[term].items())
-        ]
+        postings = []
+        for doc_id, positions in sorted(vocabulary[term].items()):
+            # positions is expected to be a list of token indices
+            p_list = list(positions) if positions is not None else []
+            postings.append({"doc_id": doc_id, "tf": len(p_list), "positions": p_list})
         idf_payload: Dict[str, float] = {}
         for method in sorted(idf_tables.keys()):
             idf_payload[method] = float(idf_tables[method].get(term, 0.0))
@@ -65,19 +88,35 @@ def write_postings(
     _atomic_write(path, "\n".join(lines) + ("\n" if lines else ""))
 
 
+def write_partial_postings(path: Path, vocabulary: Mapping[str, Mapping[int, Sequence[int]]]) -> None:
+    """Write a partial postings file for a chunk. Each line contains term and postings only.
+
+    The caller is responsible for writing into a partial directory. This format is
+    intentionally lightweight to support external k-way merge later.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines: List[str] = []
+    for term in sorted(vocabulary.keys()):
+        postings = [
+            {"doc_id": doc_id, "positions": list(positions)}
+            for doc_id, positions in sorted(vocabulary[term].items())
+        ]
+        payload = {"term": term, "postings": postings}
+        lines.append(json.dumps(payload, ensure_ascii=False))
+    path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+
 def write_manifest(
     output_dir: Path,
     *,
     total_docs: int,
     total_terms: int,
-    idf_method: str,
     idf_methods: Sequence[str] | None = None,
 ) -> None:
     path = output_dir / "manifest.json"
     payload = {
         "total_docs": total_docs,
         "total_terms": total_terms,
-        "idf_method": idf_method,
     }
     if idf_methods is not None:
         payload["idf_methods"] = list(idf_methods)

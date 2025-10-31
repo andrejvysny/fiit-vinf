@@ -1,0 +1,132 @@
+workspace: "./workspace"
+
+crawler:
+  run_id: "unified-2025-01-12"
+  seeds:
+    - https://github.com/python/cpython
+    - https://github.com/torvalds/linux
+    - https://github.com/tensorflow/tensorflow
+    - https://github.com/kubernetes/kubernetes
+    - https://github.com/facebook/react
+    - https://github.com/vuejs/vue
+    - https://github.com/golang/go
+    - https://github.com/rust-lang/rust
+    - https://github.com/microsoft/vscode
+    - https://github.com/nodejs/node
+  user_agents:
+    - "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
+    - Mozilla/5.0 (Windows NT 6.1; Win64; x64; rv:47.0) Gecko/20100101 Firefox/47.0
+    - Mozilla/5.0 (Macintosh; Intel Mac OS X x.y; rv:42.0) Gecko/20100101 Firefox/42.0
+  user_agent_rotation_size: 3
+  accept_language: "en"
+  accept_encoding: "br, gzip"
+  robots:
+    user_agent: "ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)"
+    cache_ttl_sec: 86400
+  scope:
+    allowed_hosts:
+      - "github.com"
+    denied_subdomains:
+      - "api.github.com"
+      - "raw.githubusercontent.com"
+      - "gist.github.com"
+      - "codeload.github.com"
+    allow_patterns:
+      - "^https://github\\.com/topics(?:/[^/?#]+)?$"
+      - "^https://github\\.com/trending$"
+      - "^https://github\\.com/[^/]+/[^/]+/?$"
+      - "^https://github\\.com/[^/]+/[^/]+/(issues|pull)/?\\d*$"
+    deny_patterns:
+      - "/blob/"
+      - "/search"
+      - "/tree/"
+      - "/commits/"
+      - "/graphs/"
+      - "/compare/"
+      - "/archive/"
+      - "/blame/"
+      - "/raw/"
+      - "/network/"
+      - "/stargazers"
+      - "/watchers"
+      - "/contributors"
+      - "/tags"
+      - "/branches"
+      - "/tarball/"
+      - "/zipball/"
+      - "\\?q="
+      - "\\?tab="
+      - "\\?since="
+      - "\\?until="
+      - "/resources/"
+    content_types:
+      - "text/html"
+  limits:
+    global_concurrency: 4
+    per_host_concurrency: 2
+    req_per_sec: 1.0
+    connect_timeout_ms: 4000
+    read_timeout_ms: 15000
+    total_timeout_ms: 25000
+    max_retries: 3
+    backoff_base_ms: 500
+    backoff_cap_ms: 8000
+  caps:
+    per_repo_max_pages: 30
+    per_repo_max_issues: 10
+    per_repo_max_prs: 10
+    max_depth: 4
+  sleep:
+    per_request_min: 3
+    per_request_max: 5
+    batch_pause_min: 10
+    batch_pause_max: 20
+    batch_size: 50
+  storage:
+    frontier_file: "state/frontier.jsonl"
+    fetched_urls_file: "state/fetched_urls.txt"
+    robots_cache_file: "state/robots_cache.jsonl"
+    metadata_file: "metadata/crawl_metadata.jsonl"
+    html_store_root: "store/html"
+    html_compress: false
+    html_permissions: 0o644
+  logs:
+    log_file: "logs/crawler.log"
+    log_level: "INFO"
+  proxies:
+    enabled: false
+    http_url: null
+    https_url: null
+    pool: []
+    rotation_strategy: "sequential"
+
+extractor:
+  input_root: "store/html"
+  outputs:
+    text: "store/text"
+    entities: "store/entities/entities2.tsv"
+  enable_text: true
+  enable_entities: true
+  force: false
+  dry_run: false
+  verbose: false
+
+indexer:
+  default_idf: "classic"
+  build:
+    input_dir: "store/text"
+    output_dir: "store/index/default"
+    limit: null
+    dry_run: false
+    use_tokens: true
+    token_model: "cl100k_base"
+  query:
+    index_dir: "store/index/default"
+    top_k: 10
+    idf_method: "manifest"
+    show_path: false
+    # Directory to store per-query reports. If relative, it's resolved under the
+    # selected index directory. Set to empty string to disable report writing.
+    report_dir: "reports/query"
+    # Whether to write a markdown report after running each query.
+    write_report: true

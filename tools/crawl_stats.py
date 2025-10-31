@@ -339,7 +339,6 @@ def write_markdown(
 
     if service_stats:
         lines.append("## Service Stats Snapshot\n")
-        runtime = service_stats.get("runtime_seconds")
         acceptance = service_stats.get("acceptance_rate_percent")
         lines.append("| Metric | Value |\n| --- | --- |\n")
         lines.append(
@@ -351,8 +350,6 @@ def write_markdown(
         lines.append(
             f"| Policy denied | {service_stats.get('policy_denied', 'n/a')} |\n"
         )
-        if runtime is not None:
-            lines.append(f"| Runtime | {format_seconds(float(runtime))} |\n")
         if acceptance is not None:
             lines.append(f"| Acceptance rate | {float(acceptance):.2f}% |\n")
         lines.append("\n")
@@ -472,10 +469,8 @@ def print_console_summary(
 
     if service_stats:
         print("\n-- Service Stats Snapshot --")
-        runtime = service_stats.get("runtime_seconds")
         acceptance = service_stats.get("acceptance_rate_percent")
-        if runtime is not None:
-            print(f"Runtime:         {format_seconds(float(runtime))}")
+
         if acceptance is not None:
             print(f"Acceptance rate: {float(acceptance):.2f}%")
         print(

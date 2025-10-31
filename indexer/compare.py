@@ -1,15 +1,18 @@
-"""Generate side-by-side comparisons for different IDF methods."""
+"""Compare ranked outputs across IDF strategies."""
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import combinations
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from .search import InvertedIndex, SearchResult
+from .idf import IDFRegistry
+from .search import SearchEngine, SearchResult
 
-DEFAULT_OUTPUT = Path("docs/generated/index_comparison.md")
+DEFAULT_OUTPUT = Path("reports/idf_comparison.tsv")
 DEFAULT_QUERIES = [
     "github crawler",
     "async http client",
@@ -17,10 +20,193 @@ DEFAULT_QUERIES = [
 ]
 
 
+@dataclass(frozen=True)
+class RankingRow:
+    query: str
+    method: str
+    rank: int
+    doc_id: int
+    score: float
+    title: str
+
+
+@dataclass(frozen=True)
+class PairwiseComparison:
+    method_a: str
+    method_b: str
+    overlap: int
+    jaccard: float
+
+
+@dataclass
+class MethodRanking:
+    method: str
+    results: List[SearchResult]
+
+
+@dataclass
+class QueryComparison:
+    query: str
+    rankings: List[MethodRanking]
+    pairwise_metrics: List[PairwiseComparison]
+
+    @property
+    def methods(self) -> Tuple[str, ...]:
+        return tuple(r.method for r in self.rankings)
+
+
+@dataclass
+class ComparisonReport:
+    comparisons: List[QueryComparison]
+    rows: List[RankingRow]
+    top_k: int
+
+    def console_lines(self) -> List[str]:
+        lines: List[str] = []
+        timestamp = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        lines.append(f"IDF comparison report generated {timestamp}")
+        lines.append("")
+
+        for comparison in self.comparisons:
+            lines.append(f"Query: {comparison.query!r}")
+            lines.append(f"Methods: {', '.join(comparison.methods)}")
+
+            for ranking in comparison.rankings:
+                if not ranking.results:
+                    lines.append(f"  {ranking.method:<14} no results")
+                    continue
+                summary = ", ".join(
+                    f"{idx + 1}:{res.doc_id} ({res.score:.3f})"
+                    for idx, res in enumerate(ranking.results[: self.top_k])
+                )
+                lines.append(f"  {ranking.method:<14} {summary}")
+
+            if comparison.pairwise_metrics:
+                lines.append("  Pairwise overlap / Jaccard:")
+                for metric in comparison.pairwise_metrics:
+                    lines.append(
+                        f"    {metric.method_a} vs {metric.method_b}: "
+                        f"overlap={metric.overlap}/{self.top_k}, "
+                        f"jaccard={metric.jaccard:.2f}"
+                    )
+            lines.append("")
+
+        return lines
+
+    def write_tsv(self, output_path: Path) -> None:
+        output_path = output_path.resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        header = "query\tmethod\trank\tdoc_id\tscore\ttitle"
+        rows = [
+            f"{row.query}\t{row.method}\t{row.rank}\t{row.doc_id}\t{row.score:.6f}\t{row.title.replace('\t', ' ').replace('\n', ' ')}"
+            for row in self.rows
+        ]
+        output_path.write_text(
+            "\n".join([header, *rows]) + ("\n" if rows else "\n"),
+            encoding="utf-8",
+        )
+
+
+class RankingComparator:
+    """Evaluate ranked outputs across multiple IDF strategies."""
+
+    def __init__(
+        self,
+        search_engine: SearchEngine,
+        *,
+        methods: Sequence[str],
+        top_k: int,
+        use_stored_idf: bool = True,
+    ) -> None:
+        self.engine = search_engine
+        self.methods = tuple(methods)
+        self.top_k = max(top_k, 0)
+        self.use_stored_idf = use_stored_idf
+
+    def evaluate(self, queries: Iterable[str]) -> ComparisonReport:
+        comparisons: List[QueryComparison] = []
+        rows: List[RankingRow] = []
+
+        for query in queries:
+            rankings = [
+                MethodRanking(
+                    method=method,
+                    results=self.engine.search(
+                        query,
+                        top_k=self.top_k,
+                        idf_method=method,
+                        use_stored_idf=self.use_stored_idf,
+                    ),
+                )
+                for method in self.methods
+            ]
+            pairwise = self._pairwise_metrics(rankings)
+            comparisons.append(
+                QueryComparison(query=query, rankings=rankings, pairwise_metrics=pairwise)
+            )
+            rows.extend(self._rows_for(query, rankings))
+
+        return ComparisonReport(comparisons=comparisons, rows=rows, top_k=self.top_k)
+
+    def _rows_for(self, query: str, rankings: List[MethodRanking]) -> List[RankingRow]:
+        rows: List[RankingRow] = []
+        for ranking in rankings:
+            for idx, result in enumerate(ranking.results[: self.top_k], start=1):
+                rows.append(
+                    RankingRow(
+                        query=query,
+                        method=ranking.method,
+                        rank=idx,
+                        doc_id=result.doc_id,
+                        score=result.score,
+                        title=result.title or "<untitled>",
+                    )
+                )
+        return rows
+
+    def _pairwise_metrics(
+        self, rankings: List[MethodRanking]
+    ) -> List[PairwiseComparison]:
+        metrics: List[PairwiseComparison] = []
+        for left, right in combinations(rankings, 2):
+            overlap = self._rank_overlap(left.results, right.results)
+            jaccard = self._jaccard(left.results, right.results)
+            metrics.append(
+                PairwiseComparison(
+                    method_a=left.method,
+                    method_b=right.method,
+                    overlap=overlap,
+                    jaccard=jaccard,
+                )
+            )
+        return metrics
+
+    def _rank_overlap(
+        self, left: Sequence[SearchResult], right: Sequence[SearchResult]
+    ) -> int:
+        overlap = 0
+        for idx in range(self.top_k):
+            if idx < len(left) and idx < len(right):
+                if left[idx].doc_id == right[idx].doc_id:
+                    overlap += 1
+        return overlap
+
+    def _jaccard(
+        self, left: Sequence[SearchResult], right: Sequence[SearchResult]
+    ) -> float:
+        left_ids = {res.doc_id for res in left[: self.top_k]}
+        right_ids = {res.doc_id for res in right[: self.top_k]}
+        union = left_ids | right_ids
+        if not union:
+            return 0.0
+        return len(left_ids & right_ids) / len(union)
+
+
 def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Compare log vs RSJ IDF rankings and emit a Markdown report."
+        description="Compare ranked outputs across IDF strategies and emit a TSV report."
     )
+    registry = IDFRegistry()
     parser.add_argument(
         "--index",
         default="workspace/store/index/default",
@@ -37,6 +223,16 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         help="Optional path to a file with one query per line.",
     )
     parser.add_argument(
+        "--method",
+        dest="methods",
+        action="append",
+        type=lambda value: registry.ensure(value),
+        help=(
+            "IDF method to compare (may be specified multiple times). "
+            f"Defaults to all available methods ({', '.join(registry.supported_methods)})."
+        ),
+    )
+    parser.add_argument(
         "--top",
         type=int,
         default=5,
@@ -45,7 +241,7 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         default=str(DEFAULT_OUTPUT),
-        help="Path for Markdown output (default: %(default)s).",
+        help="Path for TSV output (default: %(default)s).",
     )
     return parser.parse_args(argv)
 
@@ -57,7 +253,9 @@ def _load_queries(args: argparse.Namespace) -> List[str]:
         if not file_path.exists():
             raise FileNotFoundError(f"Queries file not found: {file_path}")
         queries.extend(
-            line.strip() for line in file_path.read_text(encoding="utf-8").splitlines() if line.strip()
+            line.strip()
+            for line in file_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
         )
     if args.queries:
         queries.extend(q.strip() for q in args.queries if q and q.strip())
@@ -66,88 +264,20 @@ def _load_queries(args: argparse.Namespace) -> List[str]:
     return queries
 
 
-def _format_doc(result: SearchResult) -> str:
-    title = result.title or "<untitled>"
-    return f"{result.doc_id} ({title})"
-
-
-def _markdown_table(
-    query: str,
-    log_results: List[SearchResult],
-    rsj_results: List[SearchResult],
-    top_k: int,
-) -> List[str]:
-    lines = [f"## Query: `{query}`", "", "| Rank | log score | log doc | rsj score | rsj doc |", "| --- | --- | --- | --- | --- |"]
-
-    overlap = 0
-    rsj_lookup = {res.doc_id: res for res in rsj_results}
-
-    for rank in range(top_k):
-        log_res = log_results[rank] if rank < len(log_results) else None
-        rsj_res = rsj_results[rank] if rank < len(rsj_results) else None
-        if log_res and rsj_res and log_res.doc_id == rsj_res.doc_id:
-            overlap += 1
-        lines.append(
-            "| {rank} | {log_score} | {log_doc} | {rsj_score} | {rsj_doc} |".format(
-                rank=rank + 1,
-                log_score=f"{log_res.score:.4f}" if log_res else "-",
-                log_doc=_format_doc(log_res) if log_res else "-",
-                rsj_score=f"{rsj_res.score:.4f}" if rsj_res else "-",
-                rsj_doc=_format_doc(rsj_res) if rsj_res else "-",
-            )
-        )
-
-    log_ids = {res.doc_id for res in log_results[:top_k]}
-    rsj_ids = {res.doc_id for res in rsj_results[:top_k]}
-    jaccard = 0.0
-    if log_ids or rsj_ids:
-        jaccard = len(log_ids & rsj_ids) / len(log_ids | rsj_ids)
-
-    lines.append("")
-    lines.append(f"Overlap (same rank): {overlap}/{top_k}")
-    lines.append(f"Jaccard (top-{top_k} sets): {jaccard:.2f}")
-    lines.append("")
-    return lines
-
-
-def _write_markdown(output_path: Path, lines: Iterable[str]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    content = "\n".join(lines)
-    output_path.write_text(content.rstrip() + "\n", encoding="utf-8")
-
-
 def main(argv: Optional[list[str]] = None) -> int:
     args = _parse_args(argv)
     queries = _load_queries(args)
     index_dir = Path(args.index).resolve()
-    index = InvertedIndex(index_dir)
+    engine = SearchEngine(index_dir)
 
-    markdown_lines: List[str] = []
-    markdown_lines.append("# IDF Comparison")
-    markdown_lines.append("")
-    timestamp = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
-    markdown_lines.append(f"Generated on {timestamp} using index `{index_dir}`")
-    markdown_lines.append("")
+    methods = tuple(args.methods) if args.methods else engine.available_idf_methods
+    comparator = RankingComparator(engine, methods=methods, top_k=args.top)
+    report = comparator.evaluate(queries)
 
-    for query in queries:
-        log_results = index.search(
-            query,
-            top_k=args.top,
-            idf_method="log",
-            use_stored_idf=False,
-        )
-        rsj_results = index.search(
-            query,
-            top_k=args.top,
-            idf_method="rsj",
-            use_stored_idf=False,
-        )
-        markdown_lines.extend(
-            _markdown_table(query, log_results, rsj_results, args.top)
-        )
-
-    _write_markdown(Path(args.output), markdown_lines)
-    print(f"Comparison written to {args.output}")
+    report.write_tsv(Path(args.output))
+    for line in report.console_lines():
+        print(line)
+    print(f"TSV report written to {Path(args.output).resolve()}")
     return 0
 
 

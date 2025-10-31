@@ -2,7 +2,8 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional
-import yaml
+
+from config_loader import get_section, load_yaml_config
 
 @dataclass
 class ProxyConfig:
@@ -157,34 +158,55 @@ class CrawlerScraperConfig:
 
     @classmethod
     def from_yaml(cls, config_path: str) -> 'CrawlerScraperConfig':
-        with open(config_path, 'r') as f:
-            data = yaml.safe_load(f)
+        data = load_yaml_config(config_path)
 
-        robots_cfg = RobotsConfig(**data.get('robots', {}))
-        scope_cfg = ScopeConfig(**data.get('scope', {}))
-        limits_cfg = LimitsConfig(**data.get('limits', {}))
-        caps_cfg = CapsConfig(**data.get('caps', {}))
-        storage_cfg = StorageConfig(**data.get('storage', {}))
-        logs_cfg = LogsConfig(**data.get('logs', {}))
-        sleep_cfg = SleepConfig(**data.get('sleep', {}))
-        proxies_cfg = ProxyConfig(**data.get('proxies', {}))
+        if "crawler" in data:
+            crawler_section = get_section(data, "crawler")
+        else:
+            crawler_section = dict(data)
+
+        crawler_data = dict(crawler_section)
+
+        workspace = crawler_data.get("workspace") or data.get("workspace")
+        if not workspace:
+            raise ValueError("workspace must be provided at the root or under crawler.workspace")
+        crawler_data["workspace"] = workspace
+
+        run_id = crawler_data.get("run_id") or data.get("run_id")
+        if not run_id:
+            raise ValueError("crawler.run_id must be provided in the configuration.")
+        crawler_data["run_id"] = run_id
+
+        seeds = crawler_data.get("seeds")
+        if seeds is None:
+            seeds = data.get("seeds", [])
+        crawler_data["seeds"] = seeds
+
+        robots_cfg = RobotsConfig(**crawler_data.get('robots', {}))
+        scope_cfg = ScopeConfig(**crawler_data.get('scope', {}))
+        limits_cfg = LimitsConfig(**crawler_data.get('limits', {}))
+        caps_cfg = CapsConfig(**crawler_data.get('caps', {}))
+        storage_cfg = StorageConfig(**crawler_data.get('storage', {}))
+        logs_cfg = LogsConfig(**crawler_data.get('logs', {}))
+        sleep_cfg = SleepConfig(**crawler_data.get('sleep', {}))
+        proxies_cfg = ProxyConfig(**crawler_data.get('proxies', {}))
 
         # Ensure backward-compatible mapping for user agents
-        ua = data.get('user_agent', '')
-        uas = data.get('user_agents', []) or []
-        ua_rotation = data.get('user_agent_rotation_size', 1)
-        seeds = data.get('seeds', []) or []
+        ua = crawler_data.get('user_agent', '') or data.get('user_agent', '')
+        uas = crawler_data.get('user_agents', []) or data.get('user_agents', []) or []
+        ua_rotation = crawler_data.get('user_agent_rotation_size', data.get('user_agent_rotation_size', 1))
+        seeds = crawler_data.get('seeds', []) or []
         if not isinstance(seeds, list):
             raise ValueError("seeds must be a list in the configuration file")
 
         config = cls(
-            run_id=data['run_id'],
-            workspace=data['workspace'],
+            run_id=crawler_data['run_id'],
+            workspace=crawler_data['workspace'],
             user_agent=ua,
             user_agents=uas,
             user_agent_rotation_size=ua_rotation,
-            accept_language=data.get('accept_language', 'en'),
-            accept_encoding=data.get('accept_encoding', 'br, gzip'),
+            accept_language=crawler_data.get('accept_language', data.get('accept_language', 'en')),
+            accept_encoding=crawler_data.get('accept_encoding', data.get('accept_encoding', 'br, gzip')),
             seeds=seeds,
             robots=robots_cfg,
             scope=scope_cfg,
