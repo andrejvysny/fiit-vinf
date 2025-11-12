@@ -18,6 +18,7 @@ DEFAULT_QUERIES = [
     "async http client",
     "repository metadata",
 ]
+DEFAULT_MD_OUTPUT = Path("reports/idf_comparison.md")
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,52 @@ class ComparisonReport:
             "\n".join([header, *rows]) + ("\n" if rows else "\n"),
             encoding="utf-8",
         )
+
+    def write_markdown(self, output_path: Path) -> None:
+        """Emit a human-friendly markdown report summarizing comparisons.
+
+        This produces a readable document suitable for quick review and
+        inclusion in the repository `reports/` tree.
+        """
+        output_path = output_path.resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        lines: List[str] = []
+        timestamp = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        lines.append(f"# IDF comparison report")
+        lines.append("")
+        lines.append(f"Generated: {timestamp}")
+        lines.append("")
+
+        for comparison in self.comparisons:
+            lines.append(f"## Query: {comparison.query!r}")
+            lines.append("")
+            lines.append(f"**Methods:** {', '.join(comparison.methods)}")
+            lines.append("")
+
+            for ranking in comparison.rankings:
+                lines.append(f"### {ranking.method}")
+                if not ranking.results:
+                    lines.append("_no results_")
+                    lines.append("")
+                    continue
+                for idx, res in enumerate(ranking.results[: self.top_k], start=1):
+                    title = (res.title or "<untitled>").replace("\n", " ")
+                    lines.append(f"{idx}. **{title}** — doc_id: `{res.doc_id}` — score: {res.score:.6f}")
+                lines.append("")
+
+            if comparison.pairwise_metrics:
+                lines.append("### Pairwise metrics")
+                lines.append("")
+                lines.append("| Method A | Method B | Overlap | Jaccard |")
+                lines.append("|---|---|---:|---:|")
+                for metric in comparison.pairwise_metrics:
+                    lines.append(
+                        f"| {metric.method_a} | {metric.method_b} | {metric.overlap}/{self.top_k} | {metric.jaccard:.2f} |"
+                    )
+                lines.append("")
+
+        output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 class RankingComparator:
@@ -243,6 +290,11 @@ def _parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         default=str(DEFAULT_OUTPUT),
         help="Path for TSV output (default: %(default)s).",
     )
+    parser.add_argument(
+        "--markdown-output",
+        default=str(DEFAULT_MD_OUTPUT),
+        help="Optional path for markdown output (default: %(default)s). If empty, markdown will not be written.",
+    )
     return parser.parse_args(argv)
 
 
@@ -275,6 +327,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     report = comparator.evaluate(queries)
 
     report.write_tsv(Path(args.output))
+    md_out = getattr(args, "markdown_output", None)
+    if md_out:
+        try:
+            report.write_markdown(Path(md_out))
+            print(f"Markdown report written to {Path(md_out).resolve()}")
+        except Exception as exc:
+            print(f"Warning: failed to write markdown report to {md_out}: {exc}")
     for line in report.console_lines():
         print(line)
     print(f"TSV report written to {Path(args.output).resolve()}")

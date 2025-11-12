@@ -83,7 +83,7 @@ class IDFCalculator:
 
     def compute_tables(
         self,
-        vocabulary: Mapping[str, Mapping[int, "Iterable[int]"]],
+        vocabulary: Mapping[str, Mapping[int, int]],
         methods: Iterable[str] | None = None,
     ) -> Dict[str, Dict[str, float]]:
         selected_methods = (

@@ -39,8 +39,8 @@ class SearchResult:
 class TermEntry:
     term: str
     df: int
-    # postings maps doc_id -> list of token positions in that document
-    postings: Dict[int, List[int]]
+    # postings maps doc_id -> term frequency within that document
+    postings: Dict[int, int]
     idf: Dict[str, float] = field(default_factory=dict)
 
     def get_idf(self, method: str) -> float:
@@ -77,13 +77,28 @@ class IndexRepository:
     def __init__(self, index_dir: Path, *, registry: Optional[IDFRegistry] = None) -> None:
         self.index_dir = Path(index_dir)
         if not self.index_dir.exists():
-            raise FileNotFoundError(f"Index directory does not exist: {self.index_dir}")
+            # Provide a clearer, actionable error message. The index must be
+            # created by the build step (indexer.build) before queries will
+            # work. Keep raising FileNotFoundError to preserve behavior, but
+            # include instructions for the user to fix the situation.
+            raise FileNotFoundError(
+                f"Index directory does not exist: {self.index_dir}\n"
+                "Create the index first via: python -m indexer.build --input <text_dir> --output <index_dir>\n"
+                "Or run the bundled build with default config: python -m indexer.build --config config.yml"
+            )
 
         self.registry = registry or IDFRegistry()
         manifest_payload = self._load_manifest()
         metadata = self._parse_metadata(manifest_payload)
         self.documents = self._load_documents()
-        self.terms = self._load_postings()
+        self._postings_path = self.index_dir / "postings.jsonl"
+        if not self._postings_path.exists():
+            raise FileNotFoundError(f"Postings file not found: {self._postings_path}")
+        self._terms_index_path = self.index_dir / "terms.idx"
+        self._terms_index = self._load_terms_index()
+        self._term_cache: Dict[str, TermEntry] = {}
+        if self._terms_index is None:
+            self._term_cache = self._load_postings_eager()
         metadata = self._with_counts(metadata)
         metadata = self._with_methods(metadata)
         self.metadata = metadata
@@ -165,43 +180,96 @@ class IndexRepository:
             documents[doc.doc_id] = doc
         return documents
 
-    def _load_postings(self) -> Dict[str, TermEntry]:
-        postings_path = self.index_dir / "postings.jsonl"
-        if not postings_path.exists():
-            raise FileNotFoundError(f"Postings file not found: {postings_path}")
-
-        terms: Dict[str, TermEntry] = {}
-        for line in postings_path.read_text(encoding="utf-8").splitlines():
-            if not line.strip():
-                continue
-            payload = json.loads(line)
-            posting_map: Dict[int, List[int]] = {}
-            for item in payload.get("postings", []):
+    def _load_terms_index(self) -> Optional[Dict[str, Tuple[int, int]]]:
+        if not self._terms_index_path.exists():
+            return None
+        index: Dict[str, Tuple[int, int]] = {}
+        with self._terms_index_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                term = str(payload.get("term", ""))
+                if not term:
+                    continue
                 try:
-                    doc_id = int(item.get("doc_id"))
+                    offset = int(payload.get("offset", 0))
+                    length = int(payload.get("length", 0))
                 except Exception:
                     continue
-                # Prefer explicit positions when available
-                if "positions" in item and isinstance(item["positions"], list):
-                    positions = [int(p) for p in item["positions"]]
-                else:
-                    # Fallback: if tf is provided, synthesize positions (0..tf-1)
-                    tf = item.get("tf")
-                    try:
-                        tf_val = int(tf)
-                    except Exception:
-                        tf_val = 0
-                    positions = list(range(tf_val))
-                posting_map[doc_id] = positions
-            idf_map = self._parse_idf_map(payload["term"], payload.get("idf"))
-            entry = TermEntry(
-                term=str(payload["term"]),
-                df=int(payload.get("df", len(posting_map))),
-                postings=posting_map,
-                idf=idf_map,
-            )
-            terms[entry.term] = entry
+                index[term] = (offset, length)
+        return index
+
+    def _load_postings_eager(self) -> Dict[str, TermEntry]:
+        terms: Dict[str, TermEntry] = {}
+        with self._postings_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                entry = self._parse_term_payload(payload)
+                terms[entry.term] = entry
         return terms
+
+    def _parse_term_payload(self, payload: Mapping[str, object]) -> TermEntry:
+        posting_map: Dict[int, int] = {}
+        for item in payload.get("postings", []):
+            try:
+                doc_id = int(item.get("doc_id"))
+            except Exception:
+                continue
+            tf_value = item.get("tf")
+            if tf_value is None:
+                positions = item.get("positions", [])
+                if isinstance(positions, list):
+                    tf_value = len(positions)
+                else:
+                    tf_value = 0
+            try:
+                posting_map[doc_id] = int(tf_value)
+            except Exception:
+                posting_map[doc_id] = 0
+        idf_map = self._parse_idf_map(payload.get("term"), payload.get("idf"))
+        entry = TermEntry(
+            term=str(payload.get("term", "")),
+            df=int(payload.get("df", len(posting_map))),
+            postings=posting_map,
+            idf=idf_map,
+        )
+        return entry
+
+    def get_term_entry(self, term: str) -> Optional[TermEntry]:
+        cached = self._term_cache.get(term)
+        if cached is not None:
+            return cached
+        if self._terms_index is None:
+            return self._term_cache.get(term)
+        locator = self._terms_index.get(term)
+        if locator is None:
+            return None
+        offset, length = locator
+        if length <= 0:
+            return None
+        with self._postings_path.open("rb") as fh:
+            fh.seek(offset)
+            data = fh.read(length)
+        if not data:
+            return None
+        payload = json.loads(data.decode("utf-8"))
+        entry = self._parse_term_payload(payload)
+        self._term_cache[term] = entry
+        return entry
+
+    def iter_terms(self) -> Iterable[str]:
+        if self._terms_index is not None:
+            return self._terms_index.keys()
+        return self._term_cache.keys()
+
+    @property
+    def term_count(self) -> int:
+        if self._terms_index is not None:
+            return len(self._terms_index)
+        return len(self._term_cache)
 
     def _parse_idf_map(self, term: object, raw_idf: object) -> Dict[str, float]:
         if not isinstance(raw_idf, dict):
@@ -228,7 +296,7 @@ class IndexRepository:
         if metadata.total_docs <= 0:
             updated = replace(updated, total_docs=len(self.documents))
         if metadata.total_terms <= 0:
-            updated = replace(updated, total_terms=len(self.terms))
+            updated = replace(updated, total_terms=self.term_count)
         return updated
 
     def _with_methods(self, metadata: IndexMetadata) -> IndexMetadata:
@@ -251,7 +319,6 @@ class SearchEngine:
         self.metadata = self.repository.metadata
 
         self.documents = self.repository.documents
-        self.terms = self.repository.terms
 
         self.default_idf_method = self.metadata.default_idf_method
         self.available_idf_methods = self.metadata.available_idf_methods
@@ -265,7 +332,7 @@ class SearchEngine:
     # Public API
 
     def available_terms(self) -> Iterable[str]:
-        return self.terms.keys()
+        return self.repository.iter_terms()
 
     def search(
         self,
@@ -306,7 +373,7 @@ class SearchEngine:
         matched_terms: Dict[int, Dict[str, int]] = defaultdict(dict)
 
         for term, q_tf in query.term_freq.items():
-            entry = self.terms.get(term)
+            entry = self.repository.get_term_entry(term)
             if entry is None or entry.df <= 0:
                 continue
 
@@ -315,8 +382,9 @@ class SearchEngine:
                 continue
 
             query_weight = 1.0 + math.log(q_tf)
-            for doc_id, positions in entry.postings.items():
-                tf = len(positions) if positions is not None else 0
+            for doc_id, tf in entry.postings.items():
+                if tf is None:
+                    continue
                 if tf <= 0:
                     continue
                 tf_weight = 1.0 + math.log(tf)
@@ -326,21 +394,17 @@ class SearchEngine:
         return doc_scores, matched_terms
 
     def _resolve_idf(self, entry: TermEntry, method: str, use_stored: bool) -> float:
-        # Prefer stored IDF values when available in the postings. The index
-        # build step precomputes IDF scores for all supported methods and
-        # stores them per-term; use those values to avoid runtime
-        # recomputation and keep queries fast. Only fall back to computing
-        # on-the-fly if the stored value is missing or zero.
-        try:
-            stored_value = entry.get_idf(method)
-        except Exception:
-            stored_value = 0.0
+        # Prefer stored IDF values when requested and available.
+        stored_value = 0.0
+        if use_stored:
+            try:
+                stored_value = entry.get_idf(method)
+            except Exception:
+                stored_value = 0.0
+            if stored_value and stored_value != 0.0:
+                return stored_value
 
-        if stored_value and stored_value != 0.0:
-            return stored_value
-
-        # If no stored value (or zero), fallback to compute. This path is
-        # unlikely if the index was built with all supported methods.
+        # If stored values are disabled or missing, compute on-the-fly.
         return self.idf_calculator.compute(entry.df, method)
 
     def _rank_results(

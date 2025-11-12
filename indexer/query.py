@@ -99,7 +99,18 @@ def main(argv: Optional[list[str]] = None) -> int:
     index_dir = Path(index_dir_str).resolve()
     # measure index loading / SearchEngine construction
     index_load_start = time.perf_counter()
-    search_index = SearchEngine(index_dir)
+    try:
+        search_index = SearchEngine(index_dir)
+    except FileNotFoundError as exc:
+        total_elapsed = time.perf_counter() - start_total
+        # Print a friendly error and timing information, then exit.
+        print(f"[error] {exc}", file=sys.stderr)
+        print(
+            "Index not found. Build the index first with: python -m indexer.build --config config.yml",
+            file=sys.stderr,
+        )
+        print(f"Timing (s): args_parse={t_after_args - start_total:.6f}, total={total_elapsed:.6f}", file=sys.stderr)
+        return 2
     index_load_elapsed = time.perf_counter() - index_load_start
 
     idf_setting = args.idf_method or query_cfg.idf_method

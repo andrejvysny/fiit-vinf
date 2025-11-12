@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Sequence, List, Tuple
 import json
+import os
 
 from config_loader import ConfigError, load_yaml_config
 
@@ -88,7 +89,7 @@ class IndexWriter:
     def write(
         self,
         documents: Sequence[DocumentRecord],
-        vocabulary: Dict[str, Dict[int, list]],
+        vocabulary: Dict[str, Dict[int, int]],
         idf_tables: Dict[str, Dict[str, float]],
         *,
         available_methods: Iterable[str],
@@ -155,6 +156,9 @@ class IndexBuilder:
         postings_out_path = self.options.output_dir / "postings.jsonl"
         if postings_out_path.exists():
             postings_out_path.unlink()
+        terms_index_path = self.options.output_dir / "terms.idx"
+        if terms_index_path.exists():
+            terms_index_path.unlink()
 
         token_counter: Optional[Callable[[str], int]] = None
         if self.options.use_tokens:
@@ -233,66 +237,75 @@ class IndexBuilder:
             heap.append((term, idx))
         heapq.heapify(heap)
 
-        postings_out_path = self.options.output_dir / "postings.jsonl"
-        out_lines: List[str] = []
+        postings_out_tmp = postings_out_path.with_name(postings_out_path.name + ".tmp")
+        terms_index_tmp = terms_index_path.with_name(terms_index_path.name + ".tmp")
 
         # idf calculator
         idf_calculator = IDFCalculator(total_docs, registry=self.registry, methods=self.methods)
         terms_count = 0
 
-        while heap:
-            term, src_idx = heapq.heappop(heap)
-            # merged postings across all iterators that currently point to `term`
-            merged_postings: Dict[int, List[int]] = {}
+        with postings_out_tmp.open("wb") as postings_fh, terms_index_tmp.open("w", encoding="utf-8") as index_fh:
+            while heap:
+                term, src_idx = heapq.heappop(heap)
+                # merged postings across all iterators that currently point to `term`
+                merged_postings: Dict[int, int] = {}
 
-            def collect_from_index(i: int) -> None:
-                t_i, p_i, it_i = file_iters[i]
-                # p_i is list of posting items
-                for item in p_i:
-                    doc_id = int(item.get("doc_id"))
-                    positions = [int(p) for p in item.get("positions", [])]
-                    merged_postings.setdefault(doc_id, []).extend(positions)
-                # advance iterator i
-                try:
-                    nxt_term, nxt_postings = next(it_i)
-                    file_iters[i][0] = nxt_term
-                    file_iters[i][1] = nxt_postings
-                    heapq.heappush(heap, (nxt_term, i))
-                except StopIteration:
-                    file_iters[i][0] = None
-                    file_iters[i][1] = None
+                def collect_from_index(i: int) -> None:
+                    t_i, p_i, it_i = file_iters[i]
+                    # p_i is list of posting items
+                    for item in p_i:
+                        doc_id = int(item.get("doc_id"))
+                        if "tf" in item:
+                            tf = int(item.get("tf") or 0)
+                        else:
+                            # fallback for legacy partials containing positions
+                            positions = item.get("positions", [])
+                            tf = len(positions) if isinstance(positions, list) else int(item.get("tf") or 0)
+                        merged_postings[doc_id] = merged_postings.get(doc_id, 0) + tf
+                    # advance iterator i
+                    try:
+                        nxt_term, nxt_postings = next(it_i)
+                        file_iters[i][0] = nxt_term
+                        file_iters[i][1] = nxt_postings
+                        heapq.heappush(heap, (nxt_term, i))
+                    except StopIteration:
+                        file_iters[i][0] = None
+                        file_iters[i][1] = None
 
-            # collect from the popped source
-            collect_from_index(src_idx)
-            # also collect from other iterators that have the same current term
-            while heap and heap[0][0] == term:
-                _, other_idx = heapq.heappop(heap)
-                collect_from_index(other_idx)
+                # collect from the popped source
+                collect_from_index(src_idx)
+                # also collect from other iterators that have the same current term
+                while heap and heap[0][0] == term:
+                    _, other_idx = heapq.heappop(heap)
+                    collect_from_index(other_idx)
 
-            # produce final merged postings for this term
-            postings_list_out = [
-                {"doc_id": doc_id, "tf": len(sorted(set(positions))), "positions": sorted(set(positions))}
-                for doc_id, positions in sorted(merged_postings.items())
-            ]
-            df = len(postings_list_out)
-            idf_map = {method: float(idf_calculator.compute(df, method)) for method in self.methods}
-            payload = {"term": term, "df": df, "idf": idf_map, "postings": postings_list_out}
-            out_lines.append(json.dumps(payload, ensure_ascii=False))
-            terms_count += 1
-            # flush periodically
-            if len(out_lines) >= 1000:
-                with postings_out_path.open("a", encoding="utf-8") as fh:
-                    fh.write("\n".join(out_lines) + "\n")
-                out_lines = []
+                # produce final merged postings for this term
+                postings_list_out = [
+                    {"doc_id": doc_id, "tf": int(tf)}
+                    for doc_id, tf in sorted(merged_postings.items())
+                ]
+                df = len(postings_list_out)
+                idf_map = {method: float(idf_calculator.compute(df, method)) for method in self.methods}
+                payload = {"term": term, "df": df, "idf": idf_map, "postings": postings_list_out}
+                line = json.dumps(payload, ensure_ascii=False)
+                encoded = (line + "\n").encode("utf-8")
+                offset = postings_fh.tell()
+                postings_fh.write(encoded)
+                index_entry = {
+                    "term": term,
+                    "offset": int(offset),
+                    "length": int(len(encoded)),
+                }
+                index_fh.write(json.dumps(index_entry, ensure_ascii=False))
+                index_fh.write("\n")
+                terms_count += 1
 
-            # log progress every 1000 terms merged
-            if terms_count % 1000 == 0:
-                logger.info("Merged %d terms so far...", terms_count)
+                # log progress every 1000 terms merged
+                if terms_count % 1000 == 0:
+                    logger.info("Merged %d terms so far...", terms_count)
 
-        # final flush
-        if out_lines:
-            with postings_out_path.open("a", encoding="utf-8") as fh:
-                fh.write("\n".join(out_lines) + "\n")
+        os.replace(postings_out_tmp, postings_out_path)
+        os.replace(terms_index_tmp, terms_index_path)
 
         # write manifest
         write_manifest(

@@ -103,24 +103,15 @@ def iter_document_records(
         yield record
 
 
-def build_vocabulary(docs: Sequence[DocumentRecord]) -> Dict[str, Dict[int, List[int]]]:
-    """Construct postings from the loaded documents using token positions.
+def build_vocabulary(docs: Sequence[DocumentRecord]) -> Dict[str, Dict[int, int]]:
+    """Construct postings from the loaded documents using term frequencies.
 
     Returns:
-        Mapping term -> {doc_id: [positions]}
+        Mapping term -> {doc_id: term_frequency}
     """
-    postings: Dict[str, Dict[int, List[int]]] = {}
+    postings: Dict[str, Dict[int, int]] = {}
     for doc in docs:
-        # prefer explicit term_positions if available
-        positions_map = getattr(doc, "term_positions", None)
-        if positions_map is None:
-            # fallback: reconstruct positions from token list
-            positions_map = {}
-            for pos, tok in enumerate(doc.tokens):
-                bucket = positions_map.setdefault(tok, [])
-                bucket.append(pos)
-
-        for term, positions in positions_map.items():
+        for term, freq in doc.term_freq.items():
             bucket = postings.setdefault(term, {})
-            bucket[doc.doc_id] = list(positions)
+            bucket[doc.doc_id] = int(freq)
     return postings

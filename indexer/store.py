@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence
+from typing import Dict, List, Mapping
 
 from .ingest import DocumentRecord
 
@@ -64,31 +64,44 @@ def append_docs(output_dir: Path, docs: Sequence[DocumentRecord]) -> None:
 
 def write_postings(
     output_dir: Path,
-    vocabulary: Mapping[str, Mapping[int, Sequence[int]]],
+    vocabulary: Mapping[str, Mapping[int, int]],
     idf_tables: Mapping[str, Mapping[str, float]],
 ) -> None:
-    path = output_dir / "postings.jsonl"
-    lines: List[str] = []
-    for term in sorted(vocabulary.keys()):
-        postings = []
-        for doc_id, positions in sorted(vocabulary[term].items()):
-            # positions is expected to be a list of token indices
-            p_list = list(positions) if positions is not None else []
-            postings.append({"doc_id": doc_id, "tf": len(p_list), "positions": p_list})
-        idf_payload: Dict[str, float] = {}
-        for method in sorted(idf_tables.keys()):
-            idf_payload[method] = float(idf_tables[method].get(term, 0.0))
-        payload = {
-            "term": term,
-            "df": len(postings),
-            "idf": idf_payload,
-            "postings": postings,
-        }
-        lines.append(json.dumps(payload, ensure_ascii=False))
-    _atomic_write(path, "\n".join(lines) + ("\n" if lines else ""))
+    postings_path = output_dir / "postings.jsonl"
+    index_path = output_dir / "terms.idx"
+    postings_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_postings = postings_path.with_name(postings_path.name + ".tmp")
+    tmp_index = index_path.with_name(index_path.name + ".tmp")
+    with tmp_postings.open("wb") as postings_fh, tmp_index.open("w", encoding="utf-8") as index_fh:
+        for term in sorted(vocabulary.keys()):
+            postings = []
+            for doc_id, tf in sorted(vocabulary[term].items()):
+                postings.append({"doc_id": doc_id, "tf": int(tf)})
+            idf_payload: Dict[str, float] = {}
+            for method in sorted(idf_tables.keys()):
+                idf_payload[method] = float(idf_tables[method].get(term, 0.0))
+            payload = {
+                "term": term,
+                "df": len(postings),
+                "idf": idf_payload,
+                "postings": postings,
+            }
+            line = json.dumps(payload, ensure_ascii=False)
+            encoded = (line + "\n").encode("utf-8")
+            offset = postings_fh.tell()
+            postings_fh.write(encoded)
+            index_entry = {
+                "term": term,
+                "offset": int(offset),
+                "length": int(len(encoded)),
+            }
+            index_fh.write(json.dumps(index_entry, ensure_ascii=False))
+            index_fh.write("\n")
+    os.replace(tmp_postings, postings_path)
+    os.replace(tmp_index, index_path)
 
 
-def write_partial_postings(path: Path, vocabulary: Mapping[str, Mapping[int, Sequence[int]]]) -> None:
+def write_partial_postings(path: Path, vocabulary: Mapping[str, Mapping[int, int]]) -> None:
     """Write a partial postings file for a chunk. Each line contains term and postings only.
 
     The caller is responsible for writing into a partial directory. This format is
@@ -98,8 +111,8 @@ def write_partial_postings(path: Path, vocabulary: Mapping[str, Mapping[int, Seq
     lines: List[str] = []
     for term in sorted(vocabulary.keys()):
         postings = [
-            {"doc_id": doc_id, "positions": list(positions)}
-            for doc_id, positions in sorted(vocabulary[term].items())
+            {"doc_id": doc_id, "tf": int(tf)}
+            for doc_id, tf in sorted(vocabulary[term].items())
         ]
         payload = {"term": term, "postings": postings}
         lines.append(json.dumps(payload, ensure_ascii=False))
