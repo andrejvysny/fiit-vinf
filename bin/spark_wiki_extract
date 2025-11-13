@@ -17,7 +17,7 @@ fi
 WIKI_IN="wiki_dump"
 WIKI_OUT="workspace/store/wiki"
 WIKI_MAX_PAGES=""
-PARTITIONS="64"
+PARTITIONS="256"  # Increased default for large files
 LOG_FILE="logs/wiki_extract.jsonl"
 SPARK_ARGS=""
 
@@ -38,7 +38,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --partitions)
             PARTITIONS="$2"
-            SPARK_ARGS="$SPARK_ARGS --partitions $2"
             shift 2
             ;;
         --log)
@@ -51,14 +50,24 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1" >&2
+            echo "Usage: $0 [--wiki-in DIR] [--out DIR] [--wiki-max-pages N] [--partitions N] [--log FILE] [--dry-run]"
             exit 1
             ;;
     esac
 done
 
-# Set memory based on workload (wiki dumps need more memory)
-export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-8g}"
-export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+# Check if this is a test run or full run
+if [[ -n "${WIKI_MAX_PAGES}" ]] && [[ "${WIKI_MAX_PAGES}" -le 1000 ]]; then
+    # Test mode - lower memory
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+    echo "Test mode: Processing ${WIKI_MAX_PAGES} pages"
+else
+    # Full extraction - high memory for 100GB+ file
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-12g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-6g}"
+    echo "Full mode: Processing complete dump"
+fi
 
 echo "========================================"
 echo "Spark Wikipedia Extractor"
@@ -72,7 +81,7 @@ echo "Partitions: ${PARTITIONS}"
 echo "Log: ${LOG_FILE}"
 echo "========================================"
 
-# Run Spark job via Docker Compose
+# Run Spark job via Docker Compose with increased memory limits
 cd "${PROJECT_ROOT}"
 docker compose -f "${COMPOSE_FILE}" run --rm \
     -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
@@ -83,14 +92,17 @@ docker compose -f "${COMPOSE_FILE}" run --rm \
         /opt/spark/bin/spark-submit \
             --master local[*] \
             --driver-memory ${SPARK_DRIVER_MEMORY} \
-            --conf spark.driver.maxResultSize=2g \
+            --executor-memory ${SPARK_EXECUTOR_MEMORY} \
+            --conf spark.driver.maxResultSize=4g \
+            --conf spark.memory.offHeap.enabled=true \
+            --conf spark.memory.offHeap.size=2g \
             --conf spark.sql.adaptive.enabled=true \
             --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+            --conf spark.sql.shuffle.partitions=${PARTITIONS} \
             /opt/app/spark/jobs/wiki_extractor.py \
             --wiki-in /opt/app/${WIKI_IN} \
             --out /opt/app/${WIKI_OUT} \
             --log /opt/app/${LOG_FILE} \
-            --partitions ${PARTITIONS} \
             ${SPARK_ARGS}
     "
 

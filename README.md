@@ -1,12 +1,17 @@
-# GitHub Crawl → Extract → Index Pipeline
+# GitHub Crawl → Extract → Index + Wikipedia Enrichment Pipeline
 
-This repository hosts a three-stage data pipeline tailored for analysing public GitHub content. It consists of:
+This repository hosts a multi-stage data pipeline for analyzing public GitHub content with Wikipedia entity enrichment:
 
-1. **Crawler (`crawler/`)** – policy-aware frontier crawler that fetches HTML and writes crawl metadata.
-2. **Extractor (`extractor/`)** – regex-driven entity and text extraction over stored HTML.
-3. **Indexer (`indexer/`)** – lightweight inverted index builders and query helpers for ad hoc search.
+## Core Pipeline
+1. **Crawler (`crawler/`)** – Policy-aware frontier crawler that fetches HTML and writes crawl metadata
+2. **HTML Extractor (`extractor/` + `spark/jobs/html_extractor.py`)** – Regex-driven entity and text extraction from stored HTML (Python or Spark-based)
+3. **Indexer (`indexer/`)** – Lightweight inverted index builders and query helpers for ad hoc search
 
-The modules are loosely coupled through the shared `workspace/` directory, letting you resume or recompute individual stages.
+## Wikipedia Extension Pipeline (NEW)
+4. **Wikipedia Extractor (`spark/jobs/wiki_extractor.py`)** – Streams and extracts structured data from 100GB+ Wikipedia XML dumps
+5. **Entity-Wiki Join (`spark/jobs/join_html_wiki.py`)** – Joins HTML entities with Wikipedia canonical pages for entity resolution
+
+The modules are loosely coupled through the shared `workspace/` directory, letting you resume or recompute individual stages independently.
 
 ---
 
@@ -24,6 +29,7 @@ All commands in this README assume the virtual environment is active.
 
 ## Architecture Overview
 
+### Core Pipeline
 ```
 config.yml ──► python -m crawler
               │
@@ -33,7 +39,7 @@ config.yml ──► python -m crawler
               └─ Logs & service stats→ workspace/logs/, workspace/state/service_stats.json
                  │
                  ▼
-python -m extractor
+bin/spark_extract (or python -m extractor)
               │
               ├─ Raw text dumps      → workspace/store/text/
               └─ Entities TSV        → workspace/store/entities/entities.tsv
@@ -46,7 +52,26 @@ python -m indexer.build
               └─ manifest.json       (index metadata)
 ```
 
-Each module exposes its own CLI entry point so you can run the stages independently or automate them via scripts in `tools/`.
+### Wikipedia Extension Pipeline
+```
+wiki_dump/*.xml ──► bin/spark_wiki_extract
+                   │
+                   ├─ pages.tsv       → workspace/store/wiki/
+                   ├─ categories.tsv
+                   ├─ links.tsv
+                   ├─ infobox.tsv
+                   ├─ abstract.tsv
+                   └─ aliases.tsv
+                      │
+                      ▼
+entities.tsv + wiki/*.tsv ──► bin/spark_join_wiki
+                              │
+                              ├─ html_wiki.tsv     → workspace/store/join/
+                              ├─ join_stats.json
+                              └─ html_wiki_agg.tsv
+```
+
+Each module exposes its own CLI entry point so you can run the stages independently or automate them via scripts.
 
 ---
 

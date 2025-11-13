@@ -80,17 +80,30 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         help='List files without processing'
     )
+    parser.add_argument(
+        '--prefer-uncompressed',
+        action='store_true',
+        default=True,
+        help='Prefer uncompressed XML over bz2 for better partitioning'
+    )
     return parser.parse_args()
 
 
-def find_wiki_dumps(input_dir: Path) -> List[Path]:
+def find_wiki_dumps(input_dir: Path, prefer_uncompressed: bool = True) -> List[Path]:
     """Find Wikipedia dump files (XML or XML.bz2)."""
     dump_files = []
 
     # Look for dump files
-    patterns = ['*.xml', '*.xml.bz2']
-    for pattern in patterns:
-        dump_files.extend(input_dir.glob(pattern))
+    xml_files = list(input_dir.glob('*.xml'))
+    bz2_files = list(input_dir.glob('*.xml.bz2'))
+
+    # Prefer uncompressed for better partitioning
+    if prefer_uncompressed and xml_files:
+        dump_files = xml_files
+    elif bz2_files:
+        dump_files = bz2_files
+    else:
+        dump_files = xml_files + bz2_files
 
     # Sort by size (process smaller files first for testing)
     dump_files.sort(key=lambda f: f.stat().st_size)
@@ -107,24 +120,33 @@ def read_dump_streaming(
     """
     Read Wikipedia dump file in streaming fashion.
     Returns DataFrame with page XML strings.
+    IMPORTANT: Does NOT cache the entire dataset.
     """
     logging.info(f"Reading dump file: {dump_path}")
 
-    # For compressed files, we'll need special handling
+    # For very large files, use more partitions
+    file_size_gb = dump_path.stat().st_size / 1e9
+    if file_size_gb > 50:
+        partitions = max(256, partitions)
+        logging.info(f"Large file detected ({file_size_gb:.1f}GB), using {partitions} partitions")
+
+    # Read file with appropriate method
     if dump_path.suffix == '.bz2':
-        # Use Spark's built-in compression support
-        # Read as text file and process line by line
-        rdd = spark.sparkContext.textFile(str(dump_path), minPartitions=partitions)
+        # BZ2 files can't be split well, but we can still try
+        logging.warning("Processing compressed file - this may be slower and use more memory")
+        # Use textFile with fewer partitions for bz2
+        rdd = spark.sparkContext.textFile(str(dump_path), minPartitions=min(partitions, 64))
     else:
-        # Plain XML - read as text
+        # Plain XML - can be split efficiently
         rdd = spark.sparkContext.textFile(str(dump_path), minPartitions=partitions)
 
-    # Process partitions to extract page blocks
-    def extract_pages_from_partition(iterator: Iterator[str]) -> Iterator[str]:
-        """Extract <page> blocks from lines."""
+    # Process partitions to extract page blocks WITHOUT excessive buffering
+    def extract_pages_from_partition_streaming(iterator: Iterator[str]) -> Iterator[str]:
+        """Extract <page> blocks from lines with minimal buffering."""
         buffer = []
         in_page = False
         page_count = 0
+        max_buffer_lines = 50000  # Limit buffer size to prevent OOM
 
         for line in iterator:
             if '<page>' in line:
@@ -132,6 +154,14 @@ def read_dump_streaming(
                 buffer = [line]
             elif in_page:
                 buffer.append(line)
+
+                # Safety check - prevent excessive buffering
+                if len(buffer) > max_buffer_lines:
+                    logging.warning(f"Page too large ({len(buffer)} lines), skipping")
+                    buffer = []
+                    in_page = False
+                    continue
+
                 if '</page>' in line:
                     # Complete page found
                     page_xml = '\n'.join(buffer)
@@ -140,21 +170,23 @@ def read_dump_streaming(
                     in_page = False
                     page_count += 1
 
-                    # Check max pages limit
-                    if max_pages and page_count >= max_pages:
+                    # Check max pages limit per partition
+                    if max_pages and page_count >= max_pages // max(partitions, 1):
                         break
 
     # Map partitions to extract pages
-    pages_rdd = rdd.mapPartitions(extract_pages_from_partition)
+    pages_rdd = rdd.mapPartitions(extract_pages_from_partition_streaming)
 
-    # Apply global limit if specified
+    # Apply global limit if specified (use take instead of full processing)
     if max_pages:
-        pages_rdd = spark.sparkContext.parallelize(
+        # Use take to limit early without processing everything
+        limited_pages = spark.sparkContext.parallelize(
             pages_rdd.take(max_pages),
-            numSlices=min(partitions, max_pages)
+            numSlices=min(partitions, max(max_pages // 100, 1))
         )
+        pages_rdd = limited_pages
 
-    # Convert to DataFrame
+    # Convert to DataFrame WITHOUT caching
     schema = StructType([
         StructField("page_xml", StringType(), False)
     ])
@@ -167,10 +199,11 @@ def read_dump_streaming(
     return pages_df
 
 
-def process_pages(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
+def process_pages_streaming(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
     """
     Process page XML to extract structured data.
-    Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts)
+    Uses streaming approach without caching intermediate results.
+    Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts, aliases)
     """
 
     # Register UDFs
@@ -181,14 +214,14 @@ def process_pages(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
     extract_infobox_udf = F.udf(extract_infobox_fields, MapType(StringType(), StringType()))
     extract_abstract_udf = F.udf(extract_abstract, StringType())
 
-    # Extract core fields from XML
+    # Extract core fields from XML - NO CACHE
     parsed_df = pages_df.withColumn("parsed", extract_page_udf("page_xml"))
 
     # Filter out failed parses
     parsed_df = parsed_df.filter(F.col("parsed").isNotNull())
 
     # Extract individual fields
-    pages_df = parsed_df.select(
+    pages_with_text = parsed_df.select(
         F.col("parsed.page_id").cast(LongType()).alias("page_id"),
         F.col("parsed.title").alias("title"),
         normalize_title_udf(F.col("parsed.title")).alias("norm_title"),
@@ -199,33 +232,35 @@ def process_pages(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
     )
 
     # Filter to main namespace (ns=0) unless it's a redirect
-    pages_df = pages_df.filter(
+    pages_with_text = pages_with_text.filter(
         (F.col("ns") == 0) | F.col("redirect_to").isNotNull()
     )
 
-    # Create pages metadata (without text)
-    pages_meta_df = pages_df.select(
+    # Process each output type separately to avoid holding everything in memory
+
+    # 1. Pages metadata (without text) - write immediately
+    pages_meta_df = pages_with_text.select(
         "page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"
     )
 
-    # Extract categories
-    categories_df = pages_df.filter(F.col("text").isNotNull()).select(
+    # 2. Categories - process and write
+    categories_df = pages_with_text.filter(F.col("text").isNotNull()).select(
         F.col("page_id"),
         F.explode(extract_categories_udf(F.col("text"))).alias("category")
     ).withColumn(
         "norm_category", normalize_title_udf(F.col("category"))
     )
 
-    # Extract internal links
-    links_df = pages_df.filter(F.col("text").isNotNull()).select(
+    # 3. Internal links - process and write
+    links_df = pages_with_text.filter(F.col("text").isNotNull()).select(
         F.col("page_id"),
         F.explode(extract_links_udf(F.col("text"))).alias("link_title")
     ).withColumn(
         "norm_link_title", normalize_title_udf(F.col("link_title"))
     )
 
-    # Extract infobox fields
-    infobox_df = pages_df.filter(F.col("text").isNotNull()).select(
+    # 4. Infobox fields - process and write
+    infobox_df = pages_with_text.filter(F.col("text").isNotNull()).select(
         F.col("page_id"),
         extract_infobox_udf(F.col("text")).alias("infobox_map")
     ).select(
@@ -233,14 +268,14 @@ def process_pages(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
         F.explode(F.col("infobox_map")).alias("key", "value")
     )
 
-    # Extract abstracts
-    abstracts_df = pages_df.filter(F.col("text").isNotNull()).select(
+    # 5. Abstracts - process and write
+    abstracts_df = pages_with_text.filter(F.col("text").isNotNull()).select(
         F.col("page_id"),
         extract_abstract_udf(F.col("text")).alias("abstract_text")
     ).filter(F.length("abstract_text") > 0)
 
-    # Create aliases from redirects
-    aliases_df = pages_df.filter(F.col("redirect_to").isNotNull()).select(
+    # 6. Aliases from redirects
+    aliases_df = pages_with_text.filter(F.col("redirect_to").isNotNull()).select(
         normalize_title_udf(F.col("title")).alias("alias_norm_title"),
         normalize_title_udf(F.col("redirect_to")).alias("canonical_norm_title")
     )
@@ -272,14 +307,14 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Find dump files
-    dump_files = find_wiki_dumps(input_dir)
+    dump_files = find_wiki_dumps(input_dir, args.prefer_uncompressed)
     if not dump_files:
         logger.error(f"No Wikipedia dump files found in {input_dir}")
         struct_logger.log("error", message="No dump files found")
         return 1
 
     logger.info(f"Found {len(dump_files)} dump file(s)")
-    dump_file = dump_files[0]  # Process first file for now
+    dump_file = dump_files[0]  # Process first file
     logger.info(f"Processing: {dump_file} ({dump_file.stat().st_size / 1e9:.1f} GB)")
 
     if args.dry_run:
@@ -288,37 +323,41 @@ def main() -> int:
             print(f)
         return 0
 
-    # Create Spark session
-    spark = SparkSession.builder \
+    # Create Spark session with better memory configuration
+    spark_builder = SparkSession.builder \
         .appName("WikiExtractor") \
         .master("local[*]") \
         .config("spark.driver.memory", os.environ.get('SPARK_DRIVER_MEMORY', '8g')) \
         .config("spark.executor.memory", os.environ.get('SPARK_EXECUTOR_MEMORY', '4g')) \
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
-        .config("spark.driver.maxResultSize", "2g") \
-        .getOrCreate()
+        .config("spark.driver.maxResultSize", "4g") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.shuffle.partitions", str(args.partitions))
 
+    # Add memory overhead for large files
+    file_size_gb = dump_file.stat().st_size / 1e9
+    if file_size_gb > 50:
+        spark_builder = spark_builder \
+            .config("spark.memory.fraction", "0.8") \
+            .config("spark.memory.storageFraction", "0.3") \
+            .config("spark.sql.autoBroadcastJoinThreshold", "-1")  # Disable broadcast joins
+
+    spark = spark_builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
 
     try:
-        # Read dump file
+        # Read dump file WITHOUT caching
         pages_df = read_dump_streaming(
             spark, dump_file, args.wiki_max_pages, args.partitions
         )
 
-        # Cache for multiple operations
-        pages_df = pages_df.cache()
-        page_count = pages_df.count()
-        logger.info(f"Loaded {page_count} pages")
-        struct_logger.log("pages_loaded", count=page_count)
-
-        # Process pages to extract structured data
-        logger.info("Extracting structured data...")
+        # Process pages to extract structured data (streaming)
+        logger.info("Extracting structured data (streaming mode)...")
         (pages_meta_df, categories_df, links_df,
-         infobox_df, abstracts_df, aliases_df) = process_pages(pages_df)
+         infobox_df, abstracts_df, aliases_df) = process_pages_streaming(pages_df)
 
-        # Write outputs
+        # Write outputs one by one to avoid memory buildup
         logger.info("Writing output files...")
 
         # Pages metadata
@@ -326,7 +365,8 @@ def main() -> int:
         write_tsv(pages_meta_df, pages_path,
                   ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
                   header=True)
-        logger.info(f"Wrote pages to {pages_path}")
+        pages_count = pages_meta_df.count()  # Count after write
+        logger.info(f"Wrote {pages_count} pages to {pages_path}")
 
         # Categories
         categories_path = output_dir / "categories.tsv"
@@ -363,14 +403,11 @@ def main() -> int:
                   header=True)
         logger.info(f"Wrote aliases to {aliases_path}")
 
-        # Generate stats
+        # Generate approximate stats (don't count everything to save memory)
         stats = {
-            "pages": pages_meta_df.count(),
-            "categories": categories_df.count(),
-            "links": links_df.count(),
-            "infobox_fields": infobox_df.count(),
-            "abstracts": abstracts_df.count(),
-            "aliases": aliases_df.count(),
+            "pages": pages_count,
+            "outputs_written": 6,
+            "files_processed": 1,
         }
 
         # Write manifest
@@ -408,15 +445,15 @@ def main() -> int:
         logger.info("=" * 60)
         logger.info("WIKIPEDIA EXTRACTION COMPLETE")
         logger.info(f"Duration: {duration:.2f} seconds")
-        logger.info(f"Pages processed: {stats['pages']}")
-        logger.info(f"Categories: {stats['categories']}")
-        logger.info(f"Links: {stats['links']}")
-        logger.info(f"Infobox fields: {stats['infobox_fields']}")
-        logger.info(f"Abstracts: {stats['abstracts']}")
-        logger.info(f"Aliases: {stats['aliases']}")
+        logger.info(f"Pages processed: {stats.get('pages', 'unknown')}")
+        logger.info(f"Outputs written: {stats['outputs_written']}")
         logger.info(f"Manifest: {manifest_path}")
         logger.info("=" * 60)
 
+    except Exception as e:
+        logger.error(f"Extraction failed: {e}")
+        struct_logger.log("error", message=str(e))
+        raise
     finally:
         spark.stop()
         struct_logger.close()

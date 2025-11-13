@@ -6,28 +6,26 @@ This document specifies the join strategy for linking HTML entities (extracted f
 
 ## Supported Entity Types
 
-### Primary Targets (High Confidence)
+The join pipeline supports the following entity types extracted from GitHub HTML pages. Entity types are defined in `spark/jobs/join_html_wiki.py:168-178`.
 
-| Entity Type | Wikipedia Target | Join Strategy |
-|-------------|-----------------|---------------|
-| LANG_STATS | Programming language pages | Normalized title match + category validation |
-| LICENSE | Software license pages | Exact/canonical title match |
-| TOPICS | Technology/software pages | Exploded topic-by-topic matching |
+### Joinable Types (Matched with Wikipedia)
 
-### Secondary Targets (Medium Confidence)
+| Entity Type | Wikipedia Target | Join Strategy | Expected Match Rate |
+|-------------|-----------------|---------------|---------------------|
+| LANG_STATS | Programming language pages | Normalized title match + category validation | 60-90% |
+| LICENSE | Software license pages | Exact/canonical title match | 80-95% |
+| TOPICS | Technology/software pages | Exploded topic-by-topic matching | 30-50% |
+| README | Keywords from README text | Selective high-value terms only | 10-30% |
 
-| Entity Type | Wikipedia Target | Join Strategy |
-|-------------|-----------------|---------------|
-| README | Keywords to relevant pages | Selective high-value terms only |
-| URL | External link validation | Domain-level enrichment |
+### Metadata Types (Not Joined)
 
-### Not Joined
+| Entity Type | Purpose | Join Support |
+|-------------|---------|--------------|
+| STAR_COUNT | Repository popularity metric | Used for filtering/ranking only |
+| FORK_COUNT | Repository fork count | Used for filtering/ranking only |
+| URL | External/internal links | Domain-level analysis (not entity resolution) |
 
-| Entity Type | Reason |
-|-------------|--------|
-| STAR_COUNT | Numeric metric, no Wikipedia equivalent |
-| FORK_COUNT | Numeric metric, no Wikipedia equivalent |
-| EMAIL | Privacy concerns, no public mapping |
+**Note**: TOPICS entities are comma-separated and automatically exploded during joining, so `"python,django,postgresql"` becomes 3 separate join attempts.
 
 ## Normalization Rules
 
@@ -247,26 +245,49 @@ Bonuses (cumulative):
 
 ## Performance Considerations
 
-### Optimization Strategies
+### Optimization Strategies (Already Implemented)
 
-1. **Broadcast small dimension tables**
-   ```python
-   broadcast(canonical_df)  # If < 1GB
-   ```
+1. **Canonical mapping cached**
+   - `canonical_df.cache()` (line 418) - Reused for all entity joins
+   - Contains both direct pages and alias mappings
+   - Typically < 500MB for English Wikipedia
 
-2. **Partition by join key**
-   ```python
-   repartition("norm_value")  # Before join
-   ```
+2. **Topic explosion handled efficiently**
+   - TOPICS values are split and exploded using Spark's `F.explode()`
+   - Each topic joins independently
+   - No manual iteration or collecting to driver
 
-3. **Filter early**
-   - Remove unsupported entity types before normalization
-   - Skip entities with null/empty values
+3. **Early filtering**
+   - Unsupported entity types filtered before normalization (line 241-243)
+   - Namespace filtering applied during canonical mapping (line 131)
+   - Null/empty values handled via DataFrame operations
 
-4. **Cache intermediate results**
-   ```python
-   canonical_df.cache()  # Reused multiple times
-   ```
+4. **Adaptive query execution**
+   - Spark AQE enabled by default in wrapper script
+   - Automatically optimizes shuffle partitions
+   - Coalesces partitions for small result sets
+
+### Memory Configuration
+
+**Default** (16GB RAM system):
+```bash
+SPARK_DRIVER_MEMORY=6g
+SPARK_EXECUTOR_MEMORY=3g
+--partitions 64
+```
+
+**Recommended** (32GB RAM system):
+```bash
+SPARK_DRIVER_MEMORY=12g
+SPARK_EXECUTOR_MEMORY=6g
+--partitions 128
+```
+
+**Performance Notes**:
+- Join is significantly faster than extraction (typically < 10 minutes)
+- Most time spent on initial data loading
+- Canonical mapping cache improves multi-type joins
+- Statistics calculation adds ~20% overhead
 
 ## Future Enhancements
 
@@ -278,7 +299,20 @@ Bonuses (cumulative):
 
 ## Usage Examples
 
-### Basic Join
+### Prerequisites
+
+Before running the join, ensure both inputs exist:
+```bash
+# 1. Wikipedia extraction must be completed
+ls -lh workspace/store/wiki/*.tsv
+# Expected: pages.tsv, aliases.tsv, categories.tsv, etc.
+
+# 2. HTML entity extraction must be completed
+ls -lh workspace/store/entities/entities.tsv
+# or entities2.tsv depending on your extraction
+```
+
+### Basic Join (Production)
 ```bash
 bin/spark_join_wiki \
   --entities workspace/store/entities/entities.tsv \
@@ -286,8 +320,9 @@ bin/spark_join_wiki \
   --out workspace/store/join
 ```
 
-### Development Mode
+### Development Mode (Small Sample)
 ```bash
+# Test with first 10,000 entities
 bin/spark_join_wiki \
   --entities workspace/store/entities/entities.tsv \
   --wiki workspace/store/wiki \
@@ -296,16 +331,127 @@ bin/spark_join_wiki \
   --partitions 32
 ```
 
+### High-Memory System
+```bash
+# For systems with 32GB+ RAM
+SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g \
+bin/spark_join_wiki \
+  --entities workspace/store/entities/entities.tsv \
+  --wiki workspace/store/wiki \
+  --out workspace/store/join \
+  --partitions 128
+```
+
+## Output Files
+
+The join pipeline produces three output files in the specified output directory:
+
+### 1. `html_wiki.tsv`
+Main join results with one row per entity-Wikipedia match attempt.
+
+**Schema**:
+| Column | Type | Description |
+|--------|------|-------------|
+| doc_id | string | HTML document identifier (SHA256) |
+| entity_type | string | Type of entity (TOPICS, LICENSE, etc.) |
+| entity_value | string | Original entity value from HTML |
+| norm_value | string | Normalized value used for matching |
+| wiki_page_id | long? | Wikipedia page ID (null if no match) |
+| wiki_title | string? | Canonical Wikipedia title |
+| join_key | string? | Normalized key that matched |
+| confidence | float? | Match confidence score (0.0-1.0) |
+
+### 2. `join_stats.json`
+Overall join statistics and match rates by entity type.
+
+**Example**:
+```json
+{
+  "total_entities": 150000,
+  "matched_entities": 45000,
+  "match_rate": 30.0,
+  "unique_wiki_pages": 1200,
+  "by_type": {
+    "TOPICS": {
+      "total": 100000,
+      "matched": 35000,
+      "rate": 35.0
+    },
+    "LICENSE": {
+      "total": 5000,
+      "matched": 4500,
+      "rate": 90.0
+    }
+  }
+}
+```
+
+### 3. `html_wiki_agg.tsv`
+Per-document aggregate statistics.
+
+**Schema**:
+| Column | Type | Description |
+|--------|------|-------------|
+| doc_id | string | HTML document identifier |
+| entity_type | string | Entity type |
+| total | long | Total entities of this type |
+| matched | long | Number that matched Wikipedia |
+
 ## Validation Commands
 
+### Check Overall Match Rates
 ```bash
-# Check match rates
+# View full statistics
 cat workspace/store/join/join_stats.json | jq .
 
-# Sample high-confidence matches
-grep -E "0\.[89]|1\.0" workspace/store/join/html_wiki.tsv | head -20
+# Quick match rate summary
+cat workspace/store/join/join_stats.json | jq '.match_rate'
 
-# Find unmatched popular entities
-awk -F'\t' '$5==""' workspace/store/join/html_wiki.tsv | \
-  cut -f3 | sort | uniq -c | sort -rn | head -20
+# Match rates by type
+cat workspace/store/join/join_stats.json | jq '.by_type'
+```
+
+### Inspect Join Results
+```bash
+# Count total rows
+wc -l workspace/store/join/html_wiki.tsv
+
+# Count matched vs unmatched
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '{if ($5 != "") matched++; else unmatched++}
+              END {print "Matched:", matched, "Unmatched:", unmatched}'
+
+# Sample high-confidence matches (confidence >= 0.8)
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '$8 >= 0.8' | head -20
+
+# Sample matched TOPICS
+grep -P '^[^\t]+\tTOPICS\t' workspace/store/join/html_wiki.tsv | \
+  grep -v $'\t\t' | head -20
+```
+
+### Find Common Unmatched Entities
+```bash
+# Most common unmatched entity values
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '$5 == "" {print $3}' | \
+  sort | uniq -c | sort -rn | head -20
+
+# Unmatched by type
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '$5 == "" {print $2}' | \
+  sort | uniq -c
+```
+
+### Verify Output Quality
+```bash
+# Check for duplicate joins (same entity matched multiple times)
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '$5 != "" {print $1"\t"$3}' | \
+  sort | uniq -c | sort -rn | head -20
+
+# Most frequently matched Wikipedia pages
+tail -n +2 workspace/store/join/html_wiki.tsv | \
+  awk -F'\t' '$6 != "" {print $6}' | \
+  sort | uniq -c | sort -rn | head -20
 ```

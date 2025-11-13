@@ -21,6 +21,7 @@ services:
     volumes:
       - ./workspace/store/html:/opt/app/workspace/store/html:ro
       - ./workspace/store/spark:/opt/app/workspace/store/spark
+      - ./workspace/store/wiki:/opt/app/workspace/store/wiki
       - ./spark:/opt/app/spark:ro
       - ./extractor:/opt/app/extractor:ro
       - ./config.yml:/opt/app/config.yml:ro
