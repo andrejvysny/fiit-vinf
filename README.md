@@ -226,6 +226,113 @@ When `indexer.build` runs (non dry-run):
 
 ---
 
+## Wikipedia Extractor (`spark/jobs/wiki_extractor.py`)
+
+### Purpose
+
+Extracts structured data from massive Wikipedia XML dumps (100GB+) without running out of memory. Uses Spark's streaming architecture with NO caching to process ~7 million pages efficiently.
+
+### Running Wikipedia extraction
+
+```bash
+# Quick test (50-100 pages, ~20 seconds)
+bin/spark_wiki_extract --wiki-max-pages 100 --partitions 8
+
+# Full extraction (~2-3 hours on 32GB RAM system)
+SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g \
+bin/spark_wiki_extract --partitions 512
+```
+
+Key flags:
+- `--wiki-in DIR` – Input directory with Wikipedia dumps (default: `wiki_dump`)
+- `--out DIR` – Output directory for TSV files (default: `workspace/store/wiki`)
+- `--wiki-max-pages N` – Limit pages for testing (default: all pages)
+- `--partitions N` – Number of Spark partitions (default: 256, auto-scales for large files)
+- `--log FILE` – Log file path (default: `logs/wiki_extract.jsonl`)
+
+### Inputs
+
+- Wikipedia XML dump (uncompressed, ~104GB): `wiki_dump/enwiki-20250901-pages-articles-multistream.xml`
+
+### Outputs (6 TSV files)
+
+1. `pages.tsv` – Page metadata (page_id, title, norm_title, namespace, redirect_to, timestamp)
+2. `categories.tsv` – Page-category mappings (page_id, category, norm_category)
+3. `links.tsv` – Internal wiki links (page_id, link_title, norm_link_title)
+4. `infobox.tsv` – Infobox key-value pairs (page_id, key, value)
+5. `abstract.tsv` – First paragraph text (page_id, abstract_text)
+6. `aliases.tsv` – Redirect mappings for title normalization (alias_norm_title, canonical_norm_title)
+
+### Implementation Notes
+
+- **Streaming architecture**: Uses `mapPartitions` with buffer limits (max 50K lines/page) to prevent OOM
+- **NO caching**: Never caches DataFrames to avoid loading 100GB+ into memory
+- **Auto-scaling partitions**: 256+ partitions for files > 50GB for optimal parallelism
+- **Memory requirements**: Minimum 16GB RAM (12g driver, 6g executor), recommended 32GB for better performance
+- **Title normalization**: Removes parenthetical suffixes, lowercases, ASCII-folds, collapses punctuation
+- See `WIKI_EXTRACTION.md` for detailed technical specification and troubleshooting
+
+---
+
+## Entity-Wikipedia Join (`spark/jobs/join_html_wiki.py`)
+
+### Purpose
+
+Joins HTML entities (extracted from GitHub pages) with Wikipedia canonical pages to enrich entities with authoritative knowledge. Handles aliases, calculates confidence scores, and resolves ambiguous matches.
+
+### Running the join
+
+```bash
+# Test with sample (10K entities, ~2-3 minutes)
+bin/spark_join_wiki \
+  --entities workspace/store/entities/entities.tsv \
+  --wiki workspace/store/wiki \
+  --out workspace/store/join \
+  --entities-max-rows 10000
+
+# Full join (all entities, ~5-10 minutes)
+bin/spark_join_wiki \
+  --entities workspace/store/entities/entities.tsv \
+  --wiki workspace/store/wiki \
+  --out workspace/store/join
+```
+
+Key flags:
+- `--entities FILE` – Path to entities.tsv from HTML extraction (required)
+- `--wiki DIR` – Directory with Wikipedia TSV files (required)
+- `--out DIR` – Output directory (default: `workspace/store/join`)
+- `--entities-max-rows N` – Limit entity rows for testing
+- `--partitions N` – Number of Spark partitions (default: 64)
+
+### Inputs
+
+- `workspace/store/entities/entities.tsv` – HTML entities from extractor
+- `workspace/store/wiki/*.tsv` – Wikipedia structured data (6 files)
+
+### Outputs (3 files)
+
+1. `html_wiki.tsv` – Main join results (doc_id, entity_type, entity_value, norm_value, wiki_page_id, wiki_title, join_key, confidence)
+2. `join_stats.json` – Overall statistics and match rates by entity type
+3. `html_wiki_agg.tsv` – Per-document aggregates (doc_id, entity_type, total, matched)
+
+### Supported Entity Types
+
+- **LANG_STATS** – Programming languages (60-90% match rate)
+- **LICENSE** – Software licenses (80-95% match rate)
+- **TOPICS** – GitHub topics (30-50% match rate, comma-separated values are exploded)
+- **README** – Keywords from README text (10-30% match rate)
+- **STAR_COUNT, FORK_COUNT, URL** – Not joined (metadata/filtering only)
+
+### Implementation Notes
+
+- **Canonical mapping**: Builds normalized title → page mapping with alias resolution
+- **Confidence scoring**: 0.0-1.0 scores based on match type, case sensitivity, and category hints
+- **Topic explosion**: TOPICS values like "python,django,postgresql" are split and joined separately
+- **Memory requirements**: 8-16GB RAM (6g driver, 3g executor)
+- See `JOIN_PLAN_WIKI.md` for detailed join strategy and validation commands
+
+---
+
 ## Workspace Layout Cheatsheet
 
 | Path | Producer | Description |
@@ -238,7 +345,12 @@ When `indexer.build` runs (non dry-run):
 | `workspace/store/text/` | extractor | Raw text dumps mirroring HTML tree |
 | `workspace/store/entities/entities.tsv` | extractor | Tab-separated entity annotations |
 | `workspace/store/index/*` | indexer | Inverted index artefacts |
+| `workspace/store/wiki/*.tsv` | wiki_extractor | Wikipedia structured data (6 TSV files) |
+| `workspace/store/join/*.tsv` | join_html_wiki | Entity-Wikipedia join results |
 | `workspace/logs/crawler.log` | crawler | Rolling crawl logs |
+| `logs/wiki_extract.jsonl` | wiki_extractor | Wikipedia extraction structured logs |
+| `logs/wiki_join.jsonl` | join_html_wiki | Join pipeline structured logs |
+| `runs/*/manifest.json` | Spark jobs | Run metadata with checksums and statistics |
 
 Clean up runtime artefacts (e.g. purge specific directories under `workspace/`) manually when re-running large experiments; avoid force-overwriting existing data unless necessary.
 
@@ -259,41 +371,70 @@ If you update regexes or scope rules, add fixtures under `tests_regex_samples/` 
 
 ## Operational Tips
 
-- Keep contact information in `config.yml` user-agents to comply with GitHub’s crawling guidelines.
+### Core Pipeline
+- Keep contact information in `config.yml` user-agents to comply with GitHub's crawling guidelines.
 - Start with a trimmed `config.yml` seeds list and inspect `workspace/logs/crawler.log` plus `workspace/state/service_stats.json` before scaling up.
 - Monitor storage consumption via the service stats JSON (`html_storage_bytes` and `html_files_count` fields).
 - Use `tools/` helpers (e.g. `python3 tools/crawl_stats.py`) to inspect run-time metrics when available.
 - When adjusting scope patterns, validate against fixture HTML and run targeted crawls to ensure the frontier grows as expected.
 
+### Wikipedia Pipeline
+- **Always test first**: Run `--wiki-max-pages 100` before attempting full extraction to verify memory settings
+- **Memory requirements**: Minimum 16GB RAM for full Wikipedia extraction, recommended 32GB+
+- **Storage needs**: ~150GB total (104GB input dump + 10-15GB outputs + temp space)
+- **Expected duration**: 2-3 hours for full 7M page extraction on 32GB system
+- **Monitor progress**: Spark UI at http://localhost:4040 while job is running
+- **Check outputs**: Verify all 6 TSV files created with `ls -lh workspace/store/wiki/`
+- **Validate join results**: Review `workspace/store/join/join_stats.json` for match rates by entity type
+- **Troubleshooting OOM**: Increase driver memory (`SPARK_DRIVER_MEMORY=16g`) and partitions (`--partitions 1024`)
+
+### Complete Pipeline Workflow
+
+To run the entire pipeline from scratch:
+
+```bash
+# 1. Crawl GitHub (if not already done)
+python -m crawler --config config.yml
+
+# 2. Extract HTML entities (Spark recommended)
+export SPARK_DRIVER_MEMORY=6g
+export SPARK_EXECUTOR_MEMORY=4g
+bin/spark_extract --partitions 256 --force
+
+# 3. Extract Wikipedia data (test first!)
+bin/spark_wiki_extract --wiki-max-pages 100 --partitions 8
+
+# 4. Run full Wikipedia extraction (requires 16-32GB RAM, ~2-3 hours)
+SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g \
+bin/spark_wiki_extract --partitions 512
+
+# 5. Join entities with Wikipedia
+bin/spark_join_wiki \
+  --entities workspace/store/entities/entities.tsv \
+  --wiki workspace/store/wiki \
+  --out workspace/store/join
+
+# 6. Build search index
+python3 -m indexer.build --config config.yml
+
+# 7. Query results
+python3 -m indexer.query --config config.yml --query "your search terms"
+
+# 8. Verify Wikipedia join results
+cat workspace/store/join/join_stats.json | jq .
+```
+
+**Total estimated time**: ~3-4 hours (depending on system specs)
+
 ---
 
-Happy crawling! The individual modules can be run end-to-end or independently, giving you flexibility to iterate on extraction rules, indexing strategies, or crawl policies without reprocessing everything.
+## Additional Documentation
 
-
-
-
-
+- **WIKI_EXTRACTION.md** – Comprehensive Wikipedia extraction technical specification
+- **JOIN_PLAN_WIKI.md** – Entity-Wikipedia join strategy and validation guide
+- **RUN.md** – Detailed run instructions for all three Spark jobs
+- **CLAUDE.md** – Project instructions for Claude Code AI assistant
 
 ---
 
-
-
-025-10-31 22:43:19,419 [INFO] extractor.pipeline: ======================================================================
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: EXTRACTION COMPLETE
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: ======================================================================
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Files processed:      28353
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Files skipped:        0
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Raw text written:     28353
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Total entities:       10585191
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Stars found:          26567
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Forks found:          12622
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Lang stats found:     0
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Readmes found:        7482
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Licenses found:       7582
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Topics found:         14004
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: URLs found:           28349
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Emails found:         1513
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: 
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline: Outputs:
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline:   Entities TSV:       /Users/andrejvysny/fiit/vinf/workspace/store/entities/entities2.tsv
-2025-10-31 22:43:19,419 [INFO] extractor.pipeline:   Raw text:           /Users/andrejvysny/fiit/vinf/workspace/store/text
+Happy crawling and extracting! The individual modules can be run end-to-end or independently, giving you flexibility to iterate on extraction rules, indexing strategies, or crawl policies without reprocessing everything.
