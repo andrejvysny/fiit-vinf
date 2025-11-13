@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper script for Spark Wikipedia dump extraction
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.spark.yml"
+
+# Check Docker availability
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: Docker is required to run Spark jobs. Please install Docker." >&2
+    exit 1
+fi
+
+# Parse arguments
+WIKI_IN="wiki_dump"
+WIKI_OUT="workspace/store/wiki"
+WIKI_MAX_PAGES=""
+PARTITIONS="64"
+LOG_FILE="logs/wiki_extract.jsonl"
+SPARK_ARGS=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --wiki-in)
+            WIKI_IN="$2"
+            shift 2
+            ;;
+        --out)
+            WIKI_OUT="$2"
+            shift 2
+            ;;
+        --wiki-max-pages)
+            WIKI_MAX_PAGES="$2"
+            SPARK_ARGS="$SPARK_ARGS --wiki-max-pages $2"
+            shift 2
+            ;;
+        --partitions)
+            PARTITIONS="$2"
+            SPARK_ARGS="$SPARK_ARGS --partitions $2"
+            shift 2
+            ;;
+        --log)
+            LOG_FILE="$2"
+            shift 2
+            ;;
+        --dry-run)
+            SPARK_ARGS="$SPARK_ARGS --dry-run"
+            shift
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Set memory based on workload (wiki dumps need more memory)
+export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-8g}"
+export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+
+echo "========================================"
+echo "Spark Wikipedia Extractor"
+echo "========================================"
+echo "Wiki Input: ${WIKI_IN}"
+echo "Output: ${WIKI_OUT}"
+echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+echo "Partitions: ${PARTITIONS}"
+[[ -n "${WIKI_MAX_PAGES}" ]] && echo "Max Pages: ${WIKI_MAX_PAGES}"
+echo "Log: ${LOG_FILE}"
+echo "========================================"
+
+# Run Spark job via Docker Compose
+cd "${PROJECT_ROOT}"
+docker compose -f "${COMPOSE_FILE}" run --rm \
+    -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+    -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+    -v "${PROJECT_ROOT}/${WIKI_IN}:/opt/app/${WIKI_IN}:ro" \
+    spark bash -c "
+        pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+        /opt/spark/bin/spark-submit \
+            --master local[*] \
+            --driver-memory ${SPARK_DRIVER_MEMORY} \
+            --conf spark.driver.maxResultSize=2g \
+            --conf spark.sql.adaptive.enabled=true \
+            --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+            /opt/app/spark/jobs/wiki_extractor.py \
+            --wiki-in /opt/app/${WIKI_IN} \
+            --out /opt/app/${WIKI_OUT} \
+            --log /opt/app/${LOG_FILE} \
+            --partitions ${PARTITIONS} \
+            ${SPARK_ARGS}
+    "
+
+echo "========================================"
+echo "Wikipedia extraction completed"
+echo "========================================"
