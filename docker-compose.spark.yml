@@ -2,8 +2,6 @@
 # Uses official Apache Spark image (3.5.x) for CPU-only processing on macOS ARM64
 # Single-host deployment with bind-mounted volumes for filesystem-based I/O
 
-version: '3.8'
-
 services:
   spark:
     image: apache/spark-py:latest

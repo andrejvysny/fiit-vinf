@@ -39,6 +39,7 @@ from spark.lib.wiki_regexes import (
     extract_internal_links,
     extract_infobox_fields,
     extract_abstract,
+    clean_wikitext_to_plaintext,
 )
 from spark.lib.io import write_tsv, write_ndjson
 from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
@@ -85,6 +86,17 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         default=True,
         help='Prefer uncompressed XML over bz2 for better partitioning'
+    )
+    parser.add_argument(
+        '--extract-text',
+        action='store_true',
+        default=True,
+        help='Extract full article text to separate files (default: True)'
+    )
+    parser.add_argument(
+        '--no-text',
+        action='store_true',
+        help='Disable full text extraction'
     )
     return parser.parse_args()
 
@@ -199,11 +211,14 @@ def read_dump_streaming(
     return pages_df
 
 
-def process_pages_streaming(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
+def process_pages_streaming(pages_df: DataFrame, extract_full_text: bool = True) -> Tuple[DataFrame, ...]:
     """
     Process page XML to extract structured data.
     Uses streaming approach without caching intermediate results.
-    Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts, aliases)
+    Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts, aliases, text_metadata?)
+
+    If extract_full_text is True, returns 7 DataFrames with text_metadata as the last one.
+    Otherwise, returns 6 DataFrames.
     """
 
     # Register UDFs
@@ -213,6 +228,15 @@ def process_pages_streaming(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
     extract_links_udf = F.udf(extract_internal_links, ArrayType(StringType()))
     extract_infobox_udf = F.udf(extract_infobox_fields, MapType(StringType(), StringType()))
     extract_abstract_udf = F.udf(extract_abstract, StringType())
+    clean_text_udf = F.udf(clean_wikitext_to_plaintext, StringType())
+
+    # SHA256 UDF for content hashing
+    import hashlib
+    def compute_sha256(text: str) -> str:
+        if not text:
+            return ""
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    sha256_udf = F.udf(compute_sha256, StringType())
 
     # Extract core fields from XML - NO CACHE
     parsed_df = pages_df.withColumn("parsed", extract_page_udf("page_xml"))
@@ -280,7 +304,36 @@ def process_pages_streaming(pages_df: DataFrame) -> Tuple[DataFrame, ...]:
         normalize_title_udf(F.col("redirect_to")).alias("canonical_norm_title")
     )
 
-    return (pages_meta_df, categories_df, links_df, infobox_df, abstracts_df, aliases_df)
+    # 7. Full text extraction (optional)
+    if extract_full_text:
+        # Clean wikitext to plain text and compute SHA256
+        text_metadata_df = pages_with_text.filter(
+            (F.col("text").isNotNull()) &
+            (F.length(F.col("text")) > 0) &
+            (F.col("redirect_to").isNull())  # Skip redirects
+        ).select(
+            F.col("page_id"),
+            F.col("title"),
+            F.col("timestamp"),
+            clean_text_udf(F.col("text")).alias("plain_text")
+        ).filter(
+            F.length(F.col("plain_text")) > 0  # Filter out empty cleaned text
+        ).withColumn(
+            "content_sha256", sha256_udf(F.col("plain_text"))
+        ).withColumn(
+            "content_length", F.length(F.col("plain_text"))
+        ).select(
+            "page_id",
+            "title",
+            "content_sha256",
+            "content_length",
+            "timestamp",
+            "plain_text"  # Keep for writing to files
+        )
+
+        return (pages_meta_df, categories_df, links_df, infobox_df, abstracts_df, aliases_df, text_metadata_df)
+    else:
+        return (pages_meta_df, categories_df, links_df, infobox_df, abstracts_df, aliases_df)
 
 
 def main() -> int:
@@ -352,10 +405,19 @@ def main() -> int:
             spark, dump_file, args.wiki_max_pages, args.partitions
         )
 
+        # Determine if text extraction is enabled
+        extract_text = args.extract_text and not args.no_text
+
         # Process pages to extract structured data (streaming)
         logger.info("Extracting structured data (streaming mode)...")
-        (pages_meta_df, categories_df, links_df,
-         infobox_df, abstracts_df, aliases_df) = process_pages_streaming(pages_df)
+        if extract_text:
+            logger.info("Full text extraction ENABLED")
+            (pages_meta_df, categories_df, links_df,
+             infobox_df, abstracts_df, aliases_df, text_metadata_df) = process_pages_streaming(pages_df, extract_full_text=True)
+        else:
+            logger.info("Full text extraction DISABLED")
+            (pages_meta_df, categories_df, links_df,
+             infobox_df, abstracts_df, aliases_df) = process_pages_streaming(pages_df, extract_full_text=False)
 
         # Write outputs one by one to avoid memory buildup
         logger.info("Writing output files...")
@@ -403,12 +465,67 @@ def main() -> int:
                   header=True)
         logger.info(f"Wrote aliases to {aliases_path}")
 
+        # Full text extraction (if enabled)
+        outputs_written = 6
+        if extract_text:
+            logger.info("Writing full text files...")
+            text_dir = output_dir / "text"
+            text_dir.mkdir(parents=True, exist_ok=True)
+
+            # Deduplicate by SHA256 and write text files
+            # Group by sha256 to get unique content
+            unique_texts_df = text_metadata_df.groupBy("content_sha256").agg(
+                F.first("plain_text").alias("text_content"),
+                F.first("content_length").alias("length")
+            )
+
+            # Collect unique texts (should be manageable for test runs)
+            # For production with millions of pages, this might need batching
+            unique_texts = unique_texts_df.collect()
+            logger.info(f"Collected {len(unique_texts)} unique texts for writing")
+
+            # Write text files directly on driver
+            text_files_written = 0
+            for row in unique_texts:
+                sha256 = row['content_sha256']
+                content = row['text_content']
+                if sha256 and content:
+                    file_path = text_dir / f'{sha256}.txt'
+                    try:
+                        file_path.write_text(content, encoding='utf-8')
+                        text_files_written += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to write {sha256}.txt: {e}")
+
+            logger.info(f"Wrote {text_files_written} unique text files to {text_dir}")
+
+            # Write metadata TSV (linking page_id to SHA256)
+            text_metadata_path = output_dir / "wiki_text_metadata.tsv"
+            write_tsv(
+                text_metadata_df.select("page_id", "title", "content_sha256", "content_length", "timestamp"),
+                text_metadata_path,
+                ["page_id", "title", "content_sha256", "content_length", "timestamp"],
+                header=True
+            )
+            logger.info(f"Wrote text metadata to {text_metadata_path}")
+
+            unique_text_count = unique_texts_df.count()
+            total_text_count = text_metadata_df.count()
+            logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({text_files_written} files written)")
+
+            outputs_written = 8  # 6 original + text_metadata.tsv + text files directory
+
         # Generate approximate stats (don't count everything to save memory)
         stats = {
             "pages": pages_count,
-            "outputs_written": 6,
+            "outputs_written": outputs_written,
             "files_processed": 1,
         }
+
+        if extract_text:
+            stats["text_files_written"] = text_files_written
+            stats["text_pages"] = total_text_count
+            stats["unique_texts"] = unique_text_count
 
         # Write manifest
         duration = time.time() - start_time
@@ -430,8 +547,15 @@ def main() -> int:
             "spark_config": {
                 "driver_memory": os.environ.get('SPARK_DRIVER_MEMORY', '8g'),
                 "partitions": args.partitions,
+            },
+            "features": {
+                "text_extraction": extract_text
             }
         }
+
+        if extract_text:
+            manifest["outputs"]["text_metadata"] = str(text_metadata_path)
+            manifest["outputs"]["text_directory"] = str(text_dir)
 
         runs_dir = Path('runs') / datetime.now().strftime('%Y%m%d_%H%M%S')
         runs_dir.mkdir(parents=True, exist_ok=True)

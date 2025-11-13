@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+#
+# Spark Structured Streaming JOIN: HTML entities → Wikipedia topics
+#
+# Links GitHub repository TOPICS with relevant Wikipedia articles using:
+# - Alias resolution (redirect handling)
+# - Category-based relevance filtering
+# - Abstract text matching
+#
+
+set -euo pipefail
+
+# Script directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Activate virtual environment
+if [ -f "${PROJECT_ROOT}/venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "${PROJECT_ROOT}/venv/bin/activate"
+fi
+
+# Default paths
+ENTITIES_PATH="${ENTITIES_PATH:-workspace/store/spark/entities/entities.tsv}"
+WIKI_DIR="${WIKI_DIR:-workspace/store/wiki}"
+OUT_DIR="${OUT_DIR:-workspace/store/wiki/join}"
+CHECKPOINT_DIR="${CHECKPOINT_DIR:-workspace/store/wiki/join/_chkpt/topics}"
+
+# Spark configuration
+SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+SPARK_SHUFFLE_PARTITIONS="${SPARK_SHUFFLE_PARTITIONS:-128}"
+
+# Streaming parameters
+MAX_FILES_PER_TRIGGER="${MAX_FILES_PER_TRIGGER:-16}"
+RELEVANT_CATEGORIES="${RELEVANT_CATEGORIES:-programming,software,computer,library,framework,license}"
+ABS_HIT="${ABS_HIT:-true}"
+
+# Parse command-line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --entities)
+            ENTITIES_PATH="$2"
+            shift 2
+            ;;
+        --wiki)
+            WIKI_DIR="$2"
+            shift 2
+            ;;
+        --out)
+            OUT_DIR="$2"
+            shift 2
+            ;;
+        --checkpoint)
+            CHECKPOINT_DIR="$2"
+            shift 2
+            ;;
+        --maxFilesPerTrigger)
+            MAX_FILES_PER_TRIGGER="$2"
+            shift 2
+            ;;
+        --relevantCategories)
+            RELEVANT_CATEGORIES="$2"
+            shift 2
+            ;;
+        --absHit)
+            ABS_HIT="$2"
+            shift 2
+            ;;
+        --clean)
+            echo "Cleaning checkpoint and output directories..."
+            rm -rf "${OUT_DIR}"
+            rm -rf "${CHECKPOINT_DIR}"
+            echo "Cleaned: ${OUT_DIR}, ${CHECKPOINT_DIR}"
+            exit 0
+            ;;
+        -h|--help)
+            cat <<EOF
+Usage: bin/spark_join_wiki_topics [OPTIONS]
+
+Spark Structured Streaming JOIN: GitHub HTML entities → Wikipedia topics
+
+Options:
+  --entities PATH          Path to HTML entities TSV (default: workspace/store/spark/entities/entities.tsv)
+  --wiki DIR              Wiki dimensions directory (default: workspace/store/wiki)
+  --out DIR               Output directory (default: workspace/store/wiki/join)
+  --checkpoint DIR        Checkpoint directory (default: workspace/store/wiki/join/_chkpt/topics)
+  --maxFilesPerTrigger N  Max files per trigger (default: 16)
+  --relevantCategories KW Comma-separated keywords (default: programming,software,computer,library,framework,license)
+  --absHit BOOL           Enable abstract matching (default: true)
+  --clean                 Clean checkpoint and output dirs
+  -h, --help              Show this help message
+
+Environment variables:
+  SPARK_DRIVER_MEMORY       Driver memory (default: 4g)
+  SPARK_EXECUTOR_MEMORY     Executor memory (default: 2g)
+  SPARK_SHUFFLE_PARTITIONS  Shuffle partitions (default: 128)
+
+Outputs:
+  - html_wiki_topics_output/  (Spark CSV parts with TSV data)
+  - html_wiki_topics_stats.tsv (per-batch statistics)
+EOF
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
+# Display configuration
+cat <<EOF
+========================================
+Spark HTML-Wiki Topics JOIN (Streaming)
+========================================
+Entities: ${ENTITIES_PATH}
+Wiki Dir: ${WIKI_DIR}
+Output: ${OUT_DIR}
+Checkpoint: ${CHECKPOINT_DIR}
+Driver Memory: ${SPARK_DRIVER_MEMORY}
+Executor Memory: ${SPARK_EXECUTOR_MEMORY}
+Shuffle Partitions: ${SPARK_SHUFFLE_PARTITIONS}
+Max Files/Trigger: ${MAX_FILES_PER_TRIGGER}
+Relevant Categories: ${RELEVANT_CATEGORIES}
+Abstract Hit: ${ABS_HIT}
+========================================
+EOF
+
+# Create output directories
+mkdir -p "${OUT_DIR}"
+mkdir -p "$(dirname "${CHECKPOINT_DIR}")"
+
+# Run spark-submit
+cd "${PROJECT_ROOT}"
+
+# Add Java 17+ compatibility flags
+export SPARK_SUBMIT_OPTS="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED -Djdk.security.allowNonCaSignedJars=true"
+
+exec spark-submit \
+    --master local[*] \
+    --driver-memory "${SPARK_DRIVER_MEMORY}" \
+    --executor-memory "${SPARK_EXECUTOR_MEMORY}" \
+    --conf spark.driver.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED" \
+    --conf spark.executor.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
+    --conf spark.sql.session.timeZone=UTC \
+    --conf spark.sql.shuffle.partitions="${SPARK_SHUFFLE_PARTITIONS}" \
+    --conf spark.driver.maxResultSize=2g \
+    --conf spark.sql.streaming.schemaInference=true \
+    --conf spark.sql.adaptive.enabled=true \
+    spark/jobs/join_html_wiki_topics.py \
+    --entities "${ENTITIES_PATH}" \
+    --wiki "${WIKI_DIR}" \
+    --out "${OUT_DIR}" \
+    --checkpoint "${CHECKPOINT_DIR}" \
+    --maxFilesPerTrigger "${MAX_FILES_PER_TRIGGER}" \
+    --relevantCategories "${RELEVANT_CATEGORIES}" \
+    --absHit "${ABS_HIT}"

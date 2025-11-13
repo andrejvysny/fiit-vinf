@@ -137,6 +137,21 @@ All outputs are UTF-8 TSV files with headers:
 | alias_norm_title | string | Normalized redirect source |
 | canonical_norm_title | string | Normalized redirect target |
 
+### wiki_text_metadata.tsv (**NEW**)
+| Column | Type | Description |
+|--------|------|-------------|
+| page_id | long | Wikipedia page ID |
+| title | string | Page title |
+| text_sha256 | string | SHA256 hash of article text |
+
+### text/ directory (**NEW**)
+Contains full article text files with SHA256-based naming (`{sha256}.txt`):
+- **Purpose**: Full article content cleaned of wikitext markup
+- **Deduplication**: Identical content stored only once (content-addressed storage)
+- **Cleaning**: Removes templates, internal links, references, HTML tags, categories
+- **Format**: Plain UTF-8 text, one file per unique article
+- **Configurable**: Use `--no-text` flag to disable full text extraction
+
 ## Processing Pipeline
 
 ```mermaid
@@ -152,6 +167,12 @@ flowchart TD
     E --> I[Infobox DataFrame]
     E --> J[Abstracts DataFrame]
     E --> K[Aliases DataFrame]
+    E --> M[Full Text DataFrame<br/>NEW]
+
+    M --> N[Clean Wikitext<br/>Remove markup]
+    N --> O[SHA256 Hash<br/>Deduplicate]
+    O --> P[Write text/*.txt<br/>Content-addressed]
+    O --> Q[Write wiki_text_metadata.tsv<br/>page_id → SHA256]
 
     F --> L[Write TSV<br/>No Caching]
     G --> L
@@ -291,6 +312,8 @@ bin/spark_wiki_extract \
 | `--partitions N` | Number of Spark partitions | 256 | No |
 | `--log FILE` | Log file path | `logs/wiki_extract.jsonl` | No |
 | `--dry-run` | List files without processing | - | No |
+| `--extract-text` | **NEW**: Enable full text extraction | Enabled | No |
+| `--no-text` | **NEW**: Disable full text extraction | - | No |
 
 ## Monitoring Progress
 
@@ -329,7 +352,11 @@ After extraction completes:
 ### 1. Verify All Outputs Created
 ```bash
 ls -lh workspace/store/wiki/
-# Expected: 6 TSV files (pages, categories, links, infobox, abstract, aliases)
+# Expected: 7 TSV files (pages, categories, links, infobox, abstract, aliases, wiki_text_metadata)
+#           + text/ directory with full article content (if --extract-text enabled)
+
+# Count text files (if full text extraction was enabled)
+ls workspace/store/wiki/text/*.txt 2>/dev/null | wc -l
 ```
 
 ### 2. Check Page Count
@@ -351,7 +378,21 @@ head -20 workspace/store/wiki/categories.tsv
 head -20 workspace/store/wiki/aliases.tsv
 ```
 
-### 4. Review Manifest
+### 4. Verify Full Text Extraction (if enabled)
+```bash
+# Check text metadata file
+head -10 workspace/store/wiki/wiki_text_metadata.tsv
+
+# Verify deduplication works
+echo "Total pages with text: $(tail -n +2 workspace/store/wiki/wiki_text_metadata.tsv | wc -l)"
+echo "Unique SHA256 hashes: $(tail -n +2 workspace/store/wiki/wiki_text_metadata.tsv | cut -f3 | sort | uniq | wc -l)"
+echo "Text files created: $(ls workspace/store/wiki/text/*.txt 2>/dev/null | wc -l)"
+
+# Sample a text file (check wikitext cleaning worked)
+head -30 workspace/store/wiki/text/$(ls workspace/store/wiki/text/ | head -1)
+```
+
+### 5. Review Manifest
 ```bash
 # Check run statistics
 cat runs/*/manifest.json | jq '.stats'

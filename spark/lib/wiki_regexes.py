@@ -227,6 +227,89 @@ def extract_abstract(text: str, max_length: int = 1000) -> str:
     return ""
 
 
+def clean_wikitext_to_plaintext(text: str) -> str:
+    """
+    Convert wikitext markup to plain text.
+    Removes all wiki markup, templates, references, etc.
+
+    This is a best-effort conversion that preserves readable content
+    while removing structural markup.
+    """
+    if not text:
+        return ""
+
+    # Skip redirect pages
+    if text.strip().startswith("#REDIRECT") or text.strip().startswith("#redirect"):
+        return ""
+
+    # Remove HTML comments
+    text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
+
+    # Remove <ref> tags and their content
+    text = re.sub(r'<ref[^>]*>.*?</ref>', '', text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r'<ref[^>]*\s*/>', '', text, flags=re.IGNORECASE)
+
+    # Remove other HTML-like tags but keep content
+    text = re.sub(r'</?[a-zA-Z][^>]*>', '', text)
+
+    # Remove templates {{ }} (nested templates handled roughly)
+    # This is a simplified approach - doesn't perfectly handle all nesting
+    # Limit iterations to prevent performance issues
+    max_iterations = 10
+    iteration = 0
+    while '{{' in text and iteration < max_iterations:
+        # Find innermost templates first
+        prev_text = text
+        text = re.sub(r'\{\{[^{}]*?\}\}', '', text)
+        iteration += 1
+        # Early exit if no change (avoids infinite loops)
+        if prev_text == text:
+            break
+
+    # If still templates remaining after iterations, do aggressive removal
+    if '{{' in text:
+        text = re.sub(r'\{\{[^\}]*\}\}', '', text)
+
+    # Remove file/image links [[File:...]] [[Image:...]]
+    text = re.sub(r'\[\[(File|Image):[^\]]+\]\]', '', text, flags=re.IGNORECASE)
+
+    # Remove category links
+    text = re.sub(r'\[\[Category:[^\]]+\]\]', '', text, flags=re.IGNORECASE)
+
+    # Convert internal links to plain text
+    # [[link|display text]] -> display text
+    text = re.sub(r'\[\[([^|\]]+)\|([^\]]+)\]\]', r'\2', text)
+    # [[link]] -> link
+    text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
+
+    # Remove external links but keep display text
+    # [http://example.com display text] -> display text
+    text = re.sub(r'\[https?://[^\s\]]+\s+([^\]]+)\]', r'\1', text)
+    # [http://example.com] -> (remove)
+    text = re.sub(r'\[https?://[^\s\]]+\]', '', text)
+
+    # Remove bold/italic markup
+    text = re.sub(r"'{2,}", '', text)
+
+    # Remove section headers but keep text
+    text = re.sub(r'^={2,}\s*(.+?)\s*={2,}$', r'\1', text, flags=re.MULTILINE)
+
+    # Remove table markup (basic)
+    text = re.sub(r'^\{\|.*?\|\}', '', text, flags=re.MULTILINE | re.DOTALL)
+    text = re.sub(r'^\|-.*?$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\|[\+!].*?$', '', text, flags=re.MULTILINE)
+
+    # Clean up whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)  # Collapse multiple newlines
+    text = re.sub(r'[ \t]+', ' ', text)  # Collapse spaces
+
+    # Remove lines that are just punctuation or whitespace
+    lines = text.split('\n')
+    cleaned_lines = [line.strip() for line in lines if line.strip() and not re.match(r'^[\s\|\-\+\*\#\:;]*$', line.strip())]
+
+    return '\n'.join(cleaned_lines).strip()
+
+
 def split_pages_from_dump(dump_text: str, max_pages: Optional[int] = None) -> List[str]:
     """
     Split a Wikipedia dump into individual page XML blocks.

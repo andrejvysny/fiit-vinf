@@ -56,12 +56,15 @@ python -m indexer.build
 ```
 wiki_dump/*.xml ──► bin/spark_wiki_extract
                    │
-                   ├─ pages.tsv       → workspace/store/wiki/
+                   ├─ pages.tsv              → workspace/store/wiki/
                    ├─ categories.tsv
                    ├─ links.tsv
                    ├─ infobox.tsv
                    ├─ abstract.tsv
-                   └─ aliases.tsv
+                   ├─ aliases.tsv
+                   ├─ wiki_text_metadata.tsv (page → SHA256 mapping)
+                   └─ text/                  → workspace/store/wiki/text/
+                      └─ {SHA256}.txt        (deduplicated full article text)
                       │
                       ▼
 entities.tsv + wiki/*.tsv ──► bin/spark_join_wiki
@@ -254,7 +257,7 @@ Key flags:
 
 - Wikipedia XML dump (uncompressed, ~104GB): `wiki_dump/enwiki-20250901-pages-articles-multistream.xml`
 
-### Outputs (6 TSV files)
+### Outputs (7 TSV files + full text directory)
 
 1. `pages.tsv` – Page metadata (page_id, title, norm_title, namespace, redirect_to, timestamp)
 2. `categories.tsv` – Page-category mappings (page_id, category, norm_category)
@@ -262,6 +265,8 @@ Key flags:
 4. `infobox.tsv` – Infobox key-value pairs (page_id, key, value)
 5. `abstract.tsv` – First paragraph text (page_id, abstract_text)
 6. `aliases.tsv` – Redirect mappings for title normalization (alias_norm_title, canonical_norm_title)
+7. `wiki_text_metadata.tsv` – **NEW**: Metadata linking pages to full article text (page_id, title, content_sha256, content_length, timestamp)
+8. `text/` – **NEW**: Full article text files with SHA256-based deduplication (`{SHA256}.txt`)
 
 ### Implementation Notes
 
@@ -270,6 +275,9 @@ Key flags:
 - **Auto-scaling partitions**: 256+ partitions for files > 50GB for optimal parallelism
 - **Memory requirements**: Minimum 16GB RAM (12g driver, 6g executor), recommended 32GB for better performance
 - **Title normalization**: Removes parenthetical suffixes, lowercases, ASCII-folds, collapses punctuation
+- **Full text extraction**: Cleans wikitext markup (templates, links, refs) and stores deduplicated plaintext using SHA256 content addressing
+- **Deduplication**: Identical article content (after cleaning) stored only once, metadata TSV maps pages to text files
+- **Configurable**: Use `--no-text` to disable full text extraction if only structured data is needed
 - See `WIKI_EXTRACTION.md` for detailed technical specification and troubleshooting
 
 ---
@@ -319,7 +327,7 @@ Key flags:
 
 - **LANG_STATS** – Programming languages (60-90% match rate)
 - **LICENSE** – Software licenses (80-95% match rate)
-- **TOPICS** – GitHub topics (30-50% match rate, comma-separated values are exploded)
+- **TOPICS** – GitHub topics (30-50% match rate, comma-separated values are exploded) - *See also: Topics Streaming JOIN below*
 - **README** – Keywords from README text (10-30% match rate)
 - **STAR_COUNT, FORK_COUNT, URL** – Not joined (metadata/filtering only)
 
@@ -330,6 +338,78 @@ Key flags:
 - **Topic explosion**: TOPICS values like "python,django,postgresql" are split and joined separately
 - **Memory requirements**: 8-16GB RAM (6g driver, 3g executor)
 - See `JOIN_PLAN_WIKI.md` for detailed join strategy and validation commands
+
+---
+
+## Topics Streaming JOIN (`spark/jobs/join_html_wiki_topics.py`) **NEW**
+
+### Purpose
+
+**Specialized streaming join** for GitHub TOPICS → Wikipedia articles with relevance filtering. Unlike the batch join above, this uses Spark Structured Streaming for incremental processing of large entity datasets with category-based and abstract-based relevance filters.
+
+### Running the streaming join
+
+```bash
+# Basic run with default settings
+bin/spark_join_wiki_topics
+
+# Custom configuration
+bin/spark_join_wiki_topics \
+  --maxFilesPerTrigger 16 \
+  --relevantCategories "programming,software,computer,library,framework" \
+  --absHit true
+```
+
+Key flags:
+- `--entities FILE` – Path to entities TSV (default: `workspace/store/spark/entities/entities.tsv`)
+- `--wiki DIR` – Wiki dimensions directory (default: `workspace/store/wiki`)
+- `--out DIR` – Output directory (default: `workspace/store/wiki/join`)
+- `--checkpoint DIR` – Streaming checkpoint (default: `workspace/store/wiki/join/_chkpt/topics`)
+- `--maxFilesPerTrigger N` – Bounded memory control (default: 16)
+- `--relevantCategories` – Comma-separated relevance keywords (default: programming,software,computer,library,framework,license)
+- `--absHit BOOL` – Enable abstract text matching (default: true)
+
+### Inputs
+
+- HTML entities TSV (streaming source) – TOPICS field only
+- Wikipedia dimensions (batch/static):
+  - `pages.tsv` (ns==0, main namespace)
+  - `aliases.tsv` (redirect resolution)
+  - `categories.tsv` (relevance filtering)
+  - `abstract.tsv` (text-based matching)
+
+### Outputs
+
+1. `html_wiki_topics_output/` – Spark CSV parts with joined data (TSV format)
+   - Columns: doc_id, entity_type, entity_value, norm_value, wiki_page_id, wiki_title, join_method, confidence, categories_json, abstract_text
+2. `html_wiki_topics_stats.tsv` – Per-batch statistics with timestamps
+
+### Join Logic
+
+**Multi-hop title resolution:**
+1. Normalize topic text (lowercase, ASCII-fold, punct collapse)
+2. Resolve aliases: topic → canonical_title (via Wikipedia redirects)
+3. Match canonical_title → pages.norm_title
+4. Enrich with categories and abstracts
+5. Filter for relevance:
+   - Category contains keywords (programming, software, etc.) OR
+   - Abstract contains normalized topic
+
+**Confidence scoring:**
+- `exact+cat`: Direct title match + relevant category
+- `alias+cat`: Alias resolution + relevant category
+- `exact+abs`: Direct match + abstract contains topic
+- `alias+abs`: Alias resolution + abstract contains topic
+
+### Implementation Notes
+
+- **Structured Streaming**: Incremental processing with checkpoint-based state
+- **Bounded memory**: maxFilesPerTrigger prevents memory overflow
+- **No broadcasts**: Static dimensions joined without broadcasting large tables
+- **Relevance filtering**: Only technology-related Wikipedia pages matched
+- **Per-batch stats**: foreachBatch tracks join rates and unique page counts
+- **Java compatibility**: Requires Java 11 or 17 (Java 24 not supported by Spark 4.0.1)
+- See `SPARK_JOIN_IMPLEMENTATION.md` for detailed architecture and troubleshooting
 
 ---
 
@@ -345,8 +425,11 @@ Key flags:
 | `workspace/store/text/` | extractor | Raw text dumps mirroring HTML tree |
 | `workspace/store/entities/entities.tsv` | extractor | Tab-separated entity annotations |
 | `workspace/store/index/*` | indexer | Inverted index artefacts |
-| `workspace/store/wiki/*.tsv` | wiki_extractor | Wikipedia structured data (6 TSV files) |
-| `workspace/store/join/*.tsv` | join_html_wiki | Entity-Wikipedia join results |
+| `workspace/store/wiki/*.tsv` | wiki_extractor | Wikipedia structured data (7 TSV files) |
+| `workspace/store/wiki/text/*.txt` | wiki_extractor | **NEW**: Full article text (SHA256-named, deduplicated) |
+| `workspace/store/join/*.tsv` | join_html_wiki | Entity-Wikipedia batch join results |
+| `workspace/store/wiki/join/html_wiki_topics_output/` | join_html_wiki_topics | **NEW**: Topics streaming join results |
+| `workspace/store/wiki/join/_chkpt/` | join_html_wiki_topics | **NEW**: Streaming checkpoints |
 | `workspace/logs/crawler.log` | crawler | Rolling crawl logs |
 | `logs/wiki_extract.jsonl` | wiki_extractor | Wikipedia extraction structured logs |
 | `logs/wiki_join.jsonl` | join_html_wiki | Join pipeline structured logs |
