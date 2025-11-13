@@ -1,0 +1,85 @@
+# Docker Compose stack for the PySpark extractor.
+# Uses the official Apache Spark Py image so Spark + Java live entirely in containers.
+
+services:
+  spark-master:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-master
+    command:
+      [
+        "/opt/spark/bin/spark-class",
+        "org.apache.spark.deploy.master.Master",
+        "--host",
+        "spark-master",
+        "--port",
+        "7077",
+        "--webui-port",
+        "8080",
+      ]
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      - PYTHONPATH=/app
+      - SPARK_WORKER_DIR=/tmp/spark-master
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    volumes:
+      - ..:/app
+    networks:
+      - spark-net
+
+  spark-worker:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-worker
+    depends_on:
+      - spark-master
+    command:
+      [
+        "/opt/spark/bin/spark-class",
+        "org.apache.spark.deploy.worker.Worker",
+        "spark://spark-master:7077",
+        "--cores",
+        "4",
+        "--memory",
+        "4G",
+        "--port",
+        "7078",
+        "--webui-port",
+        "8081",
+      ]
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      - PYTHONPATH=/app
+      - PYSPARK_PYTHON=python3
+      - SPARK_WORKER_DIR=/tmp/spark-worker
+    ports:
+      - "8081:8081"
+    volumes:
+      - ..:/app
+    networks:
+      - spark-net
+
+  spark-job:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-job
+    user: "0:0"
+    depends_on:
+      - spark-master
+      - spark-worker
+    working_dir: /app
+    entrypoint: ["/bin/bash", "-lc"]
+    command: "sleep infinity"
+    environment:
+      - PYTHONPATH=/app
+      - PYSPARK_PYTHON=python3
+      - HOME=/tmp
+    volumes:
+      - ..:/app
+    networks:
+      - spark-net
+    profiles:
+      - job
+
+networks:
+  spark-net:
+    driver: bridge

@@ -1,40 +1,30 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core crawler services reside in `crawler/` (frontier management, fetch policy, metadata writers). Regex-driven text and entity extraction lives in `extractor/`, exposed through `python -m extractor`. The downstream indexing stack is grouped under `indexer/` (`build.py`, `ingest.py`, `search.py`). CLI helpers sit in `tools/` (for example `tools/crawl_stats.py`). All configuration now lives in the unified `config.yml` at the repository root, with sections for shared settings plus `crawler`, `extractor`, and `indexer`. Test inputs and fixtures live in `tests/` and `tests_regex_samples/`. Runtime artifacts are written to `workspace/` with subdirectories that mirror the structure declared in `config.yml`.
+- `crawler/`, `extractor/`, and `indexer/` expose CLI entry points; each stage reads and writes shared `workspace/` artefacts.
+- `workspace/` holds HTML snapshots, metadata, frontier state, and logs—keep it out of commits and treat it as runtime scratch space.
+- `docs/` and `reports/` store generated summaries, `tools/` carries helper scripts, and `config.yml` centralizes defaults (use `--config` to override or `--help` for flags).
+- `tests/` mirrors the main modules (`test_regexes.py`, `test_link_extractor.py`); add new cases beside the code they validate to keep context close.
 
 ## Build, Test, and Development Commands
-Activate the virtualenv before running anything:
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-```
-Start a crawl against the configured GitHub scopes:
-```bash
-python -m crawler --config config.yml
-```
-Run extraction over stored HTML (defaults to `workspace/store/html`):
-```bash
-python -m extractor --limit 50 --entities-out workspace/store/entities/sample.tsv
-```
-Index previously extracted data for ad hoc queries:
-```bash
-python3 -m indexer.build --input workspace/store/text --output workspace/store/index/dev
-```
+- `python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt` – bootstrap the isolated interpreter that every command assumes.
+- `python -m crawler --config config.yml` – crawl GitHub, write HTML to `workspace/store/html`, log metadata, and persist frontier state.
+- `bin/spark_extract --config config.yml [flags]` – run the Dockerized PySpark extractor (starts `spark/docker-compose.yml`, submits `spark/jobs/html_extractor.py`, and mirrors `workspace/store/text` + `workspace/store/entities/entities.tsv`); pass `--local` to fall back to the pure-Python path.
+- `python -m extractor --config config.yml` – legacy single-process extractor (kept for local smoke tests and as the `--local` fallback).
+- `python3 -m indexer.build --config config.yml` – build JSONL documents, postings, and `manifest.json` from extractor outputs.
+- `python -m unittest discover tests` – run the regression suite that covers regex and extractor helpers.
 
 ## Coding Style & Naming Conventions
-Follow standard Python 3 guidelines: 4-space indentation, snake_case for functions and variables, PascalCase for classes, and module-level constants in ALL_CAPS. Prefer explicit type hints (see `crawler/service.py`). Keep functions short and streaming-friendly to avoid buffering large HTML blobs in memory. Run `black .` (available via the optional dev dependency) before sending changes, and use `isort .` if you touch import-heavy modules.
+- Follow Python/PEP 8: 4-space indentation, snake_case for variables/functions, PascalCase for classes, and use single quotes unless clarity demands double quotes.
+- Group imports (stdlib, third-party, local), avoid unused symbols, and rely on `flake8` or a formatter if you run one locally.
+- Tests live in `tests/`, follow the `test_<module>.py` pattern, and use `unittest.TestCase` with `test_*` methods so the discovery command catches them.
 
 ## Testing Guidelines
-Unit tests rely on `unittest`; target individual modules during development and run the full suite before opening a PR:
-```bash
-python3 -m unittest tests.test_crawler_service tests.test_link_extractor
-python3 -m unittest discover tests
-```
-Fixture HTML samples in `tests_regex_samples/` should cover both positive and negative cases. Add regression tests whenever you tweak regex patterns, scope rules, or workspace paths.
+- Tests use Python’s built-in `unittest`; add regression cases under `tests/` close to the module being checked for easier navigation.
+- Keep HTML/text fixtures deterministic (see `tests/test_regexes.py`) so regex coverage stays reproducible across runs.
+- Run `python -m unittest discover tests` after modifying extraction, crawling, or indexing logic before opening a PR.
 
 ## Commit & Pull Request Guidelines
-Recent history leans toward Conventional Commits (`feat:`, `refactor:`, `remove`). Keep commits focused and reference issue IDs or Tasks.md items when relevant. In pull requests, include: 1) a concise summary of behavior changes, 2) command snippets showing how the change was verified, and 3) any crawl or extraction artifacts worth reviewing (path examples under `workspace/`). Attach screenshots only when UI/log formatting changes. Link related documentation updates in `docs/` or `USAGE.MD` so reviewers can trace the narrative.
-
-## Configuration & Safety Notes
-Keep personal tokens out of `config.yml`; rely on environment variables if elevated access becomes necessary. Ensure `user_agents` always include a contact email per GitHub guidelines. For cautious crawl rollouts, start with a trimmed `crawler.seeds` list in `config.yml` and check workspace metadata before expanding. Monitor `extractor.log` and `workspace/logs/crawler.log` for anomalies after each run. Clean up `workspace/` directories instead of force-overwriting when testing destructive changes.
+- Use concise, present-tense commits (`Improve crawler logging`, `Fix extractor entity offset`); capitalize the first word and describe the change’s intent.
+- Pull requests should summarize the change, list verification steps, and link related issues if applicable; note when workspace artefacts or config defaults changed.
+- Include the commands you executed (tests, builds) in the PR description so reviewers can duplicate your verification steps.

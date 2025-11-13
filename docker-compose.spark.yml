@@ -1,0 +1,41 @@
+# Docker Compose configuration for PySpark HTML extraction pipeline
+# Uses official Apache Spark image (3.5.x) for CPU-only processing on macOS ARM64
+# Single-host deployment with bind-mounted volumes for filesystem-based I/O
+
+version: '3.8'
+
+services:
+  spark:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-extractor
+    platform: linux/amd64  # Ensures compatibility on macOS ARM64
+    working_dir: /opt/app
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-6g}
+      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
+      - SPARK_LOCAL_DIRS=/tmp/spark
+      - PYTHONPATH=/opt/app
+      - PYSPARK_PYTHON=python3
+      - HOME=/tmp
+    volumes:
+      - ./workspace/store/html:/opt/app/workspace/store/html:ro
+      - ./workspace/store/spark:/opt/app/workspace/store/spark
+      - ./spark:/opt/app/spark:ro
+      - ./extractor:/opt/app/extractor:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./runs:/opt/app/runs
+    command: |
+      bash -c "
+        pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+        /opt/spark/bin/spark-submit --master local[*] --driver-memory 4g /opt/app/spark/main.py --config /opt/app/config.yml
+      "
+    user: "0:0"  # Run as root to avoid permission issues
+    networks:
+      - spark-net
+
+networks:
+  spark-net:
+    driver: bridge

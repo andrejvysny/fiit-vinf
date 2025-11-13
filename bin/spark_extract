@@ -1,0 +1,108 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper script for Spark HTML extraction via Docker Compose
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.spark.yml"
+
+# Check Docker availability
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: Docker is required to run Spark jobs. Please install Docker." >&2
+    exit 1
+fi
+
+# Check if --local flag is passed (fallback to Python extractor)
+if [[ "${1:-}" == "--local" ]]; then
+    shift
+    echo "[spark_extract] Running local Python extractor (--local flag detected)"
+    cd "${PROJECT_ROOT}"
+    exec python -m extractor "$@"
+fi
+
+# Build command arguments for Spark job
+SPARK_ARGS=""
+SAMPLE=""
+PARTITIONS="64"
+FORCE=""
+DRY_RUN=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --sample)
+            SAMPLE="$2"
+            SPARK_ARGS="$SPARK_ARGS --sample $2"
+            shift 2
+            ;;
+        --partitions)
+            PARTITIONS="$2"
+            SPARK_ARGS="$SPARK_ARGS --partitions $2"
+            shift 2
+            ;;
+        --force)
+            FORCE="--force"
+            SPARK_ARGS="$SPARK_ARGS --force"
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN="--dry-run"
+            SPARK_ARGS="$SPARK_ARGS --dry-run"
+            shift
+            ;;
+        --config)
+            # Config is already mounted at /opt/app/config.yml
+            shift 2
+            ;;
+        *)
+            SPARK_ARGS="$SPARK_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+# Set memory based on data size
+if [[ -n "${SAMPLE}" ]] && [[ "${SAMPLE}" -le 500 ]]; then
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-2g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-1g}"
+else
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+fi
+
+echo "========================================"
+echo "Spark HTML Extractor"
+echo "========================================"
+echo "Config: ${PROJECT_ROOT}/config.yml"
+echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+echo "Partitions: ${PARTITIONS}"
+[[ -n "${SAMPLE}" ]] && echo "Sample Size: ${SAMPLE}"
+[[ -n "${FORCE}" ]] && echo "Force: enabled"
+[[ -n "${DRY_RUN}" ]] && echo "Dry Run: enabled"
+echo "========================================"
+
+# Override command if arguments provided
+if [[ -n "${SPARK_ARGS}" ]]; then
+    COMMAND="bash -c \"pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt && python /opt/app/spark/main.py${SPARK_ARGS}\""
+else
+    COMMAND=""
+fi
+
+# Run Spark job via Docker Compose
+cd "${PROJECT_ROOT}"
+if [[ -n "${COMMAND}" ]]; then
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+        -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+        spark bash -c "pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt && /opt/spark/bin/spark-submit --master local[*] --driver-memory ${SPARK_DRIVER_MEMORY} /opt/app/spark/main.py${SPARK_ARGS}"
+else
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+        -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+        spark
+fi
+
+echo "========================================"
+echo "Spark job completed"
+echo "========================================"
