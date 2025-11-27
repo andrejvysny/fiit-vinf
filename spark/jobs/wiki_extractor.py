@@ -198,9 +198,14 @@ def read_dump_as_dataframe(
     logging.info(f"Reading dump file: {dump_path}")
 
     file_size_gb = dump_path.stat().st_size / 1e9
-    if file_size_gb > 50:
+
+    # For small sample sizes, fewer partitions is faster (less overhead)
+    # Only increase partitions for large files when not sampling
+    if file_size_gb > 50 and (max_pages is None or max_pages > 10000):
         partitions = max(256, partitions)
         logging.info(f"Large file detected ({file_size_gb:.1f}GB), using {partitions} partitions")
+    else:
+        logging.info(f"Using {partitions} partitions for file ({file_size_gb:.1f}GB)")
 
     # Read using DataFrame API instead of RDD
     if dump_path.suffix == '.bz2':
@@ -450,10 +455,27 @@ def main() -> int:
     spark.sparkContext.setLogLevel("WARN")
 
     try:
+        # Adjust partitions for small sample sizes to improve performance
+        effective_partitions = args.partitions
+        if args.wiki_max_pages and args.wiki_max_pages <= 10000:
+            # Use fewer partitions for small samples to reduce overhead
+            effective_partitions = min(16, args.partitions)
+            logger.info(f"Using {effective_partitions} partitions for small sample (max_pages={args.wiki_max_pages})")
+
         # Read dump file using DataFrame API
         pages_df = read_dump_as_dataframe(
-            spark, dump_file, args.wiki_max_pages, args.partitions
+            spark, dump_file, args.wiki_max_pages, effective_partitions
         )
+
+        # CRITICAL: Cache the pages DataFrame to avoid re-scanning 111GB file
+        # This is essential when max_pages is set - without caching, each
+        # downstream operation would re-scan the entire file
+        if args.wiki_max_pages:
+            logger.info(f"Caching {args.wiki_max_pages} pages to avoid re-scanning large file...")
+            pages_df = pages_df.cache()
+            # Force materialization of cache
+            cached_count = pages_df.count()
+            logger.info(f"Cached {cached_count} pages in memory")
 
         # Determine if text extraction is enabled
         extract_text = args.extract_text and not args.no_text
@@ -472,12 +494,17 @@ def main() -> int:
         # Write outputs
         logger.info("Writing output files...")
 
-        # Pages metadata
+        # Cache pages_meta_df since it's used for count and write
+        pages_meta_df = pages_meta_df.cache()
+
+        # Pages metadata - get count first (triggers cache), then write
+        pages_count = pages_meta_df.count()
+        logger.info(f"Processing {pages_count} pages...")
+
         pages_path = output_dir / "pages.tsv"
         write_tsv(pages_meta_df, pages_path,
                   ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
                   header=True)
-        pages_count = pages_meta_df.count()
         logger.info(f"Wrote {pages_count} pages to {pages_path}")
 
         # Categories
@@ -526,11 +553,18 @@ def main() -> int:
             text_dir = output_dir / "text"
             text_dir.mkdir(parents=True, exist_ok=True)
 
+            # Cache text_metadata_df for multiple operations
+            text_metadata_df = text_metadata_df.cache()
+            total_text_count = text_metadata_df.count()
+            logger.info(f"Found {total_text_count} text pages to process")
+
             # Deduplicate by SHA256
             unique_texts_df = text_metadata_df.groupBy("content_sha256").agg(
                 F.first("plain_text").alias("text_content"),
                 F.first("content_length").alias("length")
-            )
+            ).cache()
+            unique_text_count = unique_texts_df.count()
+            logger.info(f"Found {unique_text_count} unique text contents")
 
             # Define schema for text file writing output
             write_schema = StructType([
@@ -561,9 +595,6 @@ def main() -> int:
                 header=True
             )
             logger.info(f"Wrote text metadata to {text_metadata_path}")
-
-            unique_text_count = unique_texts_df.count()
-            total_text_count = text_metadata_df.count()
             logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({text_files_written} files written)")
 
             outputs_written = 8
