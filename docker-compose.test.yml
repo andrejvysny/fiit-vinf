@@ -1,0 +1,86 @@
+# =============================================================================
+# VINF Pipeline: Test Configuration Override
+# =============================================================================
+# This file overrides paths for testing to use workspace/test_run directory.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml run --rm spark-extract
+#
+# =============================================================================
+
+services:
+  # --------------------------------------------------------------------------
+  # HTML Extraction: Override output to test directory
+  # --------------------------------------------------------------------------
+  spark-extract:
+    volumes:
+      - ./workspace/store/html:/opt/app/workspace/store/html:ro
+      - ./workspace/test_run/spark:/opt/app/workspace/store/spark
+      - ./workspace/test_run/text:/opt/app/workspace/store/text
+      - ./workspace/test_run/entities:/opt/app/workspace/store/entities
+      - ./spark:/opt/app/spark:ro
+      - ./extractor:/opt/app/extractor:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+
+  # --------------------------------------------------------------------------
+  # Wikipedia Extraction: Override output to test directory
+  # --------------------------------------------------------------------------
+  spark-wiki:
+    volumes:
+      - ./wiki_dump:/opt/app/wiki_dump:ro
+      - ./workspace/test_run/wiki:/opt/app/workspace/store/wiki
+      - ./spark:/opt/app/spark:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+
+  # --------------------------------------------------------------------------
+  # Entity-Wiki Join: Override to use test directory paths
+  # --------------------------------------------------------------------------
+  spark-join:
+    volumes:
+      - ./workspace/test_run/entities:/opt/app/workspace/store/entities:ro
+      - ./workspace/test_run/spark/entities:/opt/app/workspace/store/spark/entities:ro
+      - ./workspace/test_run/wiki:/opt/app/workspace/store/wiki:ro
+      - ./workspace/test_run/join:/opt/app/workspace/store/join
+      - ./spark:/opt/app/spark:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+
+  # --------------------------------------------------------------------------
+  # Lucene Build: Override to use test directory paths
+  # --------------------------------------------------------------------------
+  lucene-build:
+    volumes:
+      - ./workspace/test_run/text:/opt/app/workspace/store/text:ro
+      - ./workspace/test_run/entities:/opt/app/workspace/store/entities:ro
+      - ./workspace/test_run/spark/entities:/opt/app/workspace/store/spark/entities:ro
+      - ./workspace/test_run/join:/opt/app/workspace/store/join:ro
+      - ./workspace/test_run/lucene_index:/opt/app/workspace/store/lucene_index
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+
+  # --------------------------------------------------------------------------
+  # Lucene Search: Override to use test directory index
+  # --------------------------------------------------------------------------
+  lucene-search:
+    volumes:
+      - ./workspace/test_run/lucene_index:/opt/app/workspace/store/lucene_index:ro
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
