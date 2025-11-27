@@ -1,6 +1,12 @@
 # Docker Compose configuration for PySpark HTML extraction pipeline
 # Uses official Apache Spark image (3.5.x) for CPU-only processing on macOS ARM64
 # Single-host deployment with bind-mounted volumes for filesystem-based I/O
+#
+# Optimized for TB-scale processing with:
+# - Increased maxResultSize for aggregations
+# - Adaptive query execution
+# - Kryo serialization
+# - Disk-based persistence for large datasets
 
 services:
   spark:
@@ -12,6 +18,7 @@ services:
       - SPARK_NO_DAEMONIZE=1
       - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-6g}
       - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
+      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
       - SPARK_LOCAL_DIRS=/tmp/spark
       - PYTHONPATH=/opt/app
       - PYSPARK_PYTHON=python3
@@ -20,21 +27,45 @@ services:
       - ./workspace/store/html:/opt/app/workspace/store/html:ro
       - ./workspace/store/spark:/opt/app/workspace/store/spark
       - ./workspace/store/wiki:/opt/app/workspace/store/wiki
+      - ./workspace/store/join:/opt/app/workspace/store/join
       - ./spark:/opt/app/spark:ro
       - ./extractor:/opt/app/extractor:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./requirements.txt:/opt/app/requirements.txt:ro
       - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
       - ./runs:/opt/app/runs
+      # Checkpoint directory for disk-based persistence
+      - spark_checkpoints:/tmp/spark_checkpoints
     command: |
       bash -c "
         pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
-        /opt/spark/bin/spark-submit --master local[*] --driver-memory 4g /opt/app/spark/main.py --config /opt/app/config.yml
+        /opt/spark/bin/spark-submit \
+          --master local[*] \
+          --driver-memory ${SPARK_DRIVER_MEMORY:-6g} \
+          --conf spark.driver.maxResultSize=${SPARK_MAX_RESULT_SIZE:-2g} \
+          --conf spark.sql.adaptive.enabled=true \
+          --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+          --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+          --conf spark.kryoserializer.buffer.max=512m \
+          --conf spark.memory.fraction=0.8 \
+          --conf spark.memory.storageFraction=0.3 \
+          --conf spark.local.dir=/tmp/spark \
+          /opt/app/spark/main.py --config /opt/app/config.yml
       "
     user: "0:0"  # Run as root to avoid permission issues
     networks:
       - spark-net
+    # Resource limits for container
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY_LIMIT:-8g}
 
 networks:
   spark-net:
     driver: bridge
+
+volumes:
+  spark_checkpoints:
+    driver: local

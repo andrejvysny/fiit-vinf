@@ -1,0 +1,33 @@
+# Sample queries for index comparison
+# Format: query_type|query
+# Query types: simple, boolean, phrase, fuzzy, range
+
+# Simple queries (full-text search)
+simple|python web framework
+simple|machine learning
+simple|docker kubernetes
+simple|react javascript frontend
+
+# Boolean queries (AND/OR/NOT)
+boolean|python AND docker
+boolean|javascript OR typescript
+boolean|machine learning AND NOT tensorflow
+boolean|web AND framework AND python
+
+# Phrase queries (exact phrase matching)
+phrase|"neural network"
+phrase|"web scraping"
+phrase|"continuous integration"
+phrase|"dependency injection"
+
+# Fuzzy queries (typo-tolerant)
+fuzzy|pyhton
+fuzzy|javascrpt
+fuzzy|machne learning
+fuzzy|kuberntes
+
+# Range queries (numeric fields)
+# Note: Range queries use star_count field
+range|star_count:[1000 TO *]
+range|star_count:[100 TO 1000]
+range|star_count:[5000 TO 10000]

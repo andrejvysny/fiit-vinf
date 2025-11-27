@@ -166,10 +166,18 @@ def _configure_logging(level: str) -> logging.Logger:
 
 
 def _build_spark_session(opts: JobOptions) -> SparkSession:
+    import os
     builder = (
         SparkSession.builder.appName(opts.app_name)
         .master(opts.master)
         .config("spark.sql.session.timeZone", "UTC")
+        .config("spark.driver.maxResultSize", os.environ.get('SPARK_MAX_RESULT_SIZE', '2g'))
+        .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+        .config("spark.kryoserializer.buffer.max", "512m")
+        .config("spark.memory.fraction", "0.8")
+        .config("spark.memory.storageFraction", "0.3")
     )
     return builder.getOrCreate()
 
@@ -278,11 +286,153 @@ def _write_entities(spark: SparkSession, entities_rdd, output_path: Path) -> Non
     write_tsv(df, output_path, ["doc_id", "type", "value", "offsets_json"], header=True)
 
 
+def _process_partition_streaming(
+    partition_idx: int,
+    records: Iterable[str],
+    broadcast_conf,
+    entity_file_handle
+) -> Iterable[Tuple[int, ...]]:
+    """
+    Single-pass partition processing that writes text AND entities in workers.
+    Only yields stats tuples - no data collection to driver.
+    """
+    conf = broadcast_conf.value
+    input_root = Path(conf["input_root"])
+    text_out = Path(conf["text_out"]) if conf["text_out"] else None
+    entities_out = conf["entities_out"]
+    enable_text = conf["enable_text"]
+    enable_entities = conf["enable_entities"]
+    force = conf["force"]
+    log = logging.getLogger(f"spark_html_extractor.worker.{partition_idx}")
+
+    # Counters
+    files_processed = 0
+    files_skipped = 0
+    text_written_count = 0
+    entities_extracted = 0
+    stars_found = 0
+    forks_found = 0
+    langs_found = 0
+    readme_found = 0
+    license_found = 0
+    topics_found = 0
+    urls_found = 0
+    emails_found = 0
+
+    for path_str in records:
+        path = Path(path_str)
+        doc_id = path.stem
+
+        if (
+            not force
+            and not enable_entities
+            and enable_text
+            and text_out is not None
+            and text_exists(text_out, path, doc_id, input_root)
+        ):
+            files_skipped += 1
+            continue
+
+        try:
+            html_content = path.read_text(encoding="utf-8", errors="ignore")
+        except Exception as exc:
+            log.warning("Failed to read %s: %s", path, exc)
+            files_processed += 1
+            continue
+
+        if not html_content.strip():
+            log.debug("Empty HTML file: %s", path)
+            files_processed += 1
+            continue
+
+        # Write text in worker
+        if enable_text and text_out is not None and not conf["dry_run"]:
+            try:
+                raw_text = html_clean.html_to_text(html_content, strip_boilerplate=False)
+                if raw_text:
+                    if write_text(text_out, path, doc_id, raw_text, input_root, force=force):
+                        text_written_count += 1
+            except Exception as exc:
+                log.warning("Failed to write text for %s: %s", path, exc)
+
+        # Extract and accumulate entities (yield for streaming write)
+        if enable_entities and not conf["dry_run"]:
+            try:
+                entities = entity_extractors.extract_all_entities(doc_id, html_content)
+                entity_types = {row[1] for row in entities}
+
+                if "STAR_COUNT" in entity_types:
+                    stars_found += 1
+                if "FORK_COUNT" in entity_types:
+                    forks_found += 1
+                if "LANG_STATS" in entity_types:
+                    langs_found += 1
+                if "README" in entity_types:
+                    readme_found += 1
+                if "LICENSE" in entity_types:
+                    license_found += 1
+                if "TOPICS" in entity_types:
+                    topics_found += 1
+                if "URL" in entity_types:
+                    urls_found += 1
+                if "EMAIL" in entity_types:
+                    emails_found += 1
+
+                entities_extracted += len(entities)
+
+                # Yield entities for DataFrame creation (without holding in memory)
+                for entity in entities:
+                    yield ("entity", entity[0], entity[1], entity[2], entity[3])
+
+            except Exception as exc:
+                log.warning("Failed to extract entities for %s: %s", path, exc)
+
+        files_processed += 1
+
+        if files_processed % 200 == 0:
+            log.info("Partition %d: Processed %d files", partition_idx, files_processed)
+
+    # Yield final stats for this partition
+    yield (
+        "stats",
+        files_processed,
+        files_skipped,
+        text_written_count,
+        entities_extracted,
+        stars_found,
+        forks_found,
+        langs_found,
+        readme_found,
+        license_found,
+        topics_found,
+        urls_found,
+        emails_found,
+    )
+
+
 def run_spark_job(spark: SparkSession, html_files: Sequence[Path], opts: JobOptions, logger: logging.Logger) -> Tuple[int, ...]:
+    """
+    Run the Spark extraction job with streaming-safe processing.
+
+    Architecture for TB-scale data:
+    - Text files written directly in workers (no data to driver)
+    - Entities written via Spark DataFrame (distributed write)
+    - Only stats tuples collected to driver
+    - Uses DISK_ONLY persistence to avoid OOM on large datasets
+    """
+    from pyspark import StorageLevel
+    import tempfile
+    import shutil
+
     sc = spark.sparkContext
     path_strings = [str(p) for p in html_files]
     partitions = min(max(1, opts.partitions), len(path_strings)) if path_strings else 1
     logger.info("Processing %d HTML files with %d partitions", len(path_strings), partitions)
+
+    # Set up checkpoint directory for large-scale processing
+    checkpoint_dir = tempfile.mkdtemp(prefix="spark_checkpoint_")
+    sc.setCheckpointDir(checkpoint_dir)
+    logger.info("Using checkpoint directory: %s", checkpoint_dir)
 
     broadcast_conf = sc.broadcast(
         {
@@ -297,20 +447,52 @@ def run_spark_job(spark: SparkSession, html_files: Sequence[Path], opts: JobOpti
     )
 
     rdd = sc.parallelize(path_strings, partitions)
-    results_rdd = rdd.mapPartitions(lambda records: _process_partition(records, broadcast_conf)).cache()
-    stats_rdd = results_rdd.map(lambda pair: pair[0])
 
-    if stats_rdd.isEmpty():
-        combined_stats = EMPTY_STATS
-    else:
-        combined_stats = stats_rdd.fold(EMPTY_STATS, _combine_stats)
+    # Single-pass processing: writes text in workers, yields entities + stats
+    results_rdd = rdd.mapPartitionsWithIndex(
+        lambda idx, records: _process_partition_streaming(idx, records, broadcast_conf, None)
+    )
 
-    if opts.enable_entities and opts.entities_out:
-        entities_rdd = results_rdd.flatMap(lambda pair: pair[1])
-        _write_entities(spark, entities_rdd, opts.entities_out)
-        logger.info("Wrote entities TSV to %s", opts.entities_out)
-    else:
-        logger.info("Entity extraction disabled.")
+    # For large datasets, use DISK_ONLY storage to avoid OOM
+    # This checkpoints to disk, allowing stats + entities to be read separately
+    # without re-processing the HTML files
+    num_files = len(path_strings)
+    if num_files > 1000:
+        logger.info("Large dataset detected (%d files), using disk-based persistence", num_files)
+        results_rdd = results_rdd.persist(StorageLevel.DISK_ONLY)
+    elif num_files > 100:
+        # For medium datasets, use memory + disk spill
+        logger.info("Medium dataset (%d files), using memory/disk persistence", num_files)
+        results_rdd = results_rdd.persist(StorageLevel.MEMORY_AND_DISK)
+
+    try:
+        # Separate stats from entities
+        stats_rdd = results_rdd.filter(lambda x: x[0] == "stats").map(lambda x: x[1:])
+        entities_rdd = results_rdd.filter(lambda x: x[0] == "entity").map(lambda x: x[1:])
+
+        # Aggregate stats (only small tuples, safe to collect)
+        if stats_rdd.isEmpty():
+            combined_stats = EMPTY_STATS
+        else:
+            combined_stats = stats_rdd.fold(EMPTY_STATS, _combine_stats)
+
+        # Write entities using DataFrame (distributed write, no collect)
+        if opts.enable_entities and opts.entities_out:
+            _write_entities(spark, entities_rdd, opts.entities_out)
+            logger.info("Wrote entities TSV to %s", opts.entities_out)
+        else:
+            logger.info("Entity extraction disabled.")
+
+    finally:
+        # Clean up persistence and checkpoint
+        try:
+            results_rdd.unpersist()
+        except Exception:
+            pass
+        try:
+            shutil.rmtree(checkpoint_dir, ignore_errors=True)
+        except Exception:
+            pass
 
     return combined_stats
 

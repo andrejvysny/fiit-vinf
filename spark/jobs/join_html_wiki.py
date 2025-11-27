@@ -113,6 +113,12 @@ def load_wiki_data(spark: SparkSession, wiki_dir: Path) -> Dict[str, DataFrame]:
         wiki_data['categories'] = read_tsv(spark, categories_path, header=True)
         logging.info(f"Loaded {wiki_data['categories'].count()} categories")
 
+    # Load abstracts (for wiki_abstract in join output)
+    abstracts_path = wiki_dir / "abstract.tsv"
+    if abstracts_path.exists():
+        wiki_data['abstracts'] = read_tsv(spark, abstracts_path, header=True)
+        logging.info(f"Loaded {wiki_data['abstracts'].count()} abstracts")
+
     # Load infobox (optional, for additional context)
     infobox_path = wiki_dir / "infobox.tsv"
     if infobox_path.exists():
@@ -209,18 +215,31 @@ def calculate_confidence(row) -> float:
     confidence = 0.6  # Base confidence
 
     # Match type bonus
-    if row['match_type'] == 'direct':
-        confidence += 0.2
-    elif row['match_type'] == 'alias':
-        confidence += 0.1
+    try:
+        match_type = row['match_type'] if hasattr(row, '__getitem__') else getattr(row, 'match_type', None)
+        if match_type == 'direct':
+            confidence += 0.2
+        elif match_type == 'alias':
+            confidence += 0.1
+    except (KeyError, AttributeError):
+        pass
 
     # Exact case match bonus
-    if row.get('entity_value', '').lower() == row.get('wiki_title', '').lower():
-        confidence += 0.1
+    try:
+        entity_value = row['entity_value'] if hasattr(row, '__getitem__') else getattr(row, 'entity_value', '')
+        wiki_title = row['wiki_title'] if hasattr(row, '__getitem__') else getattr(row, 'wiki_title', '')
+        if entity_value and wiki_title and entity_value.lower() == wiki_title.lower():
+            confidence += 0.1
+    except (KeyError, AttributeError):
+        pass
 
     # Category hint bonus (would need categories joined)
-    if row.get('has_relevant_category'):
-        confidence += 0.1
+    try:
+        has_relevant_category = row['has_relevant_category'] if hasattr(row, '__getitem__') else getattr(row, 'has_relevant_category', False)
+        if has_relevant_category:
+            confidence += 0.1
+    except (KeyError, AttributeError):
+        pass
 
     return min(confidence, 1.0)
 
@@ -228,10 +247,13 @@ def calculate_confidence(row) -> float:
 def join_entities_with_wiki(
     entities_df: DataFrame,
     canonical_df: DataFrame,
-    categories_df: Optional[DataFrame] = None
+    categories_df: Optional[DataFrame] = None,
+    abstracts_df: Optional[DataFrame] = None
 ) -> DataFrame:
     """
     Join entities with Wikipedia canonical data.
+
+    Includes wiki_categories (pipe-separated) and wiki_abstract in output.
     """
     # Register UDF for normalization
     normalize_udf = F.udf(normalize_entity_value, StringType())
@@ -281,30 +303,82 @@ def join_entities_with_wiki(
     )
 
     # Add category signals if available
+    has_relevant_category_col = F.lit(False)
+    wiki_categories_col = F.lit(None).cast(StringType())
+
     if categories_df is not None:
-        # Check for relevant categories (programming languages, licenses, etc.)
-        relevant_categories = categories_df.filter(
-            F.col("norm_category").rlike("programming|language|license|software|technology")
-        ).select("page_id").distinct().withColumn("has_relevant_category", F.lit(True))
+        # Aggregate categories per page_id (pipe-separated)
+        categories_agg = categories_df.groupBy("page_id").agg(
+            F.concat_ws("|", F.collect_list("category")).alias("wiki_categories"),
+            F.max(
+                F.when(
+                    F.col("norm_category").rlike("programming|language|license|software|technology|framework|library|computer"),
+                    F.lit(True)
+                ).otherwise(F.lit(False))
+            ).alias("has_relevant_category")
+        )
 
         joined_df = joined_df.join(
-            relevant_categories,
-            joined_df.wiki_page_id == relevant_categories.page_id,
+            categories_agg,
+            joined_df.wiki_page_id == categories_agg.page_id,
             "left"
-        ).fillna({"has_relevant_category": False})
+        ).drop(categories_agg.page_id)
+
+        # Fill nulls
+        joined_df = joined_df.fillna({"has_relevant_category": False, "wiki_categories": ""})
     else:
         joined_df = joined_df.withColumn("has_relevant_category", F.lit(False))
+        joined_df = joined_df.withColumn("wiki_categories", F.lit(""))
 
-    # Calculate confidence scores
-    confidence_udf = F.udf(calculate_confidence, FloatType())
+    # Add abstracts if available
+    if abstracts_df is not None:
+        joined_df = joined_df.join(
+            abstracts_df.select(
+                F.col("page_id"),
+                F.col("abstract_text").alias("wiki_abstract")
+            ),
+            joined_df.wiki_page_id == abstracts_df.page_id,
+            "left"
+        ).drop(abstracts_df.page_id)
+
+        joined_df = joined_df.fillna({"wiki_abstract": ""})
+    else:
+        joined_df = joined_df.withColumn("wiki_abstract", F.lit(""))
+
+    # Calculate confidence scores with labels
+    def compute_confidence_label(row) -> str:
+        """Compute confidence label: exact+cat, alias+cat, exact+abs, alias+abs."""
+        match_type = row['match_type'] if 'match_type' in row else None
+        has_cat = row['has_relevant_category'] if 'has_relevant_category' in row else False
+        has_abs = bool(row['wiki_abstract']) if 'wiki_abstract' in row else False
+
+        if not match_type:
+            return None
+
+        is_exact = match_type == 'direct'
+
+        if has_cat:
+            return "exact+cat" if is_exact else "alias+cat"
+        elif has_abs:
+            return "exact+abs" if is_exact else "alias+abs"
+        else:
+            return "exact" if is_exact else "alias"
+
+    confidence_label_udf = F.udf(compute_confidence_label, StringType())
+
     joined_df = joined_df.withColumn(
         "confidence",
-        F.when(F.col("wiki_page_id").isNotNull(),
-               F.round(confidence_udf(F.struct(joined_df.columns)), 2)
+        F.when(
+            F.col("wiki_page_id").isNotNull(),
+            confidence_label_udf(F.struct(
+                F.col("match_type"),
+                F.col("has_relevant_category"),
+                F.col("wiki_abstract")
+            ))
         ).otherwise(None)
     )
 
-    # Select final columns
+    # Select final columns (including wiki_abstract and wiki_categories)
     final_df = joined_df.select(
         "doc_id",
         "entity_type",
@@ -312,6 +386,8 @@ def join_entities_with_wiki(
         "norm_value",
         "wiki_page_id",
         "wiki_title",
+        "wiki_abstract",
+        "wiki_categories",
         "join_key",
         "confidence"
     )
@@ -320,26 +396,33 @@ def join_entities_with_wiki(
 
 
 def generate_statistics(joined_df: DataFrame) -> Dict:
-    """Generate join statistics."""
+    """Generate join statistics including unique_wiki_pages_joined."""
     total_entities = joined_df.count()
-    matched_entities = joined_df.filter(F.col("wiki_page_id").isNotNull()).count()
-    unique_wiki_pages = joined_df.filter(F.col("wiki_page_id").isNotNull()).select("wiki_page_id").distinct().count()
+    matched_df = joined_df.filter(F.col("wiki_page_id").isNotNull())
+    matched_entities = matched_df.count()
+    unique_wiki_pages_joined = matched_df.select("wiki_page_id").distinct().count()
+
+    # Count unique documents with at least one wiki match
+    unique_docs_with_wiki = matched_df.select("doc_id").distinct().count()
 
     # Stats by entity type
     type_stats = joined_df.groupBy("entity_type").agg(
         F.count("*").alias("total"),
-        F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched")
+        F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched"),
+        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id"))).alias("unique_pages")
     ).collect()
 
     stats = {
         "total_entities": total_entities,
         "matched_entities": matched_entities,
         "match_rate": round(matched_entities / total_entities * 100, 2) if total_entities > 0 else 0,
-        "unique_wiki_pages": unique_wiki_pages,
+        "unique_wiki_pages_joined": unique_wiki_pages_joined,
+        "unique_docs_with_wiki": unique_docs_with_wiki,
         "by_type": {
             row["entity_type"]: {
                 "total": row["total"],
                 "matched": row["matched"],
+                "unique_pages": row["unique_pages"],
                 "rate": round(row["matched"] / row["total"] * 100, 2) if row["total"] > 0 else 0
             }
             for row in type_stats
@@ -419,12 +502,13 @@ def main() -> int:
         canonical_count = canonical_df.count()
         logger.info(f"Built canonical mapping with {canonical_count} entries")
 
-        # Perform join
+        # Perform join with categories and abstracts
         logger.info("Joining entities with Wikipedia...")
         joined_df = join_entities_with_wiki(
             entities_df,
             canonical_df,
-            wiki_data.get('categories')
+            wiki_data.get('categories'),
+            wiki_data.get('abstracts')
         )
 
         # Generate statistics
@@ -433,13 +517,14 @@ def main() -> int:
         struct_logger.log("join_stats", **stats)
 
         if not args.dry_run:
-            # Write main join results
+            # Write main join results (includes wiki_abstract and wiki_categories)
             output_path = output_dir / "html_wiki.tsv"
             write_tsv(
                 joined_df,
                 output_path,
                 ["doc_id", "entity_type", "entity_value", "norm_value",
-                 "wiki_page_id", "wiki_title", "join_key", "confidence"],
+                 "wiki_page_id", "wiki_title", "wiki_abstract", "wiki_categories",
+                 "join_key", "confidence"],
                 header=True
             )
             logger.info(f"Wrote join results to {output_path}")
@@ -449,13 +534,21 @@ def main() -> int:
             stats_path.write_text(json.dumps(stats, indent=2))
             logger.info(f"Wrote statistics to {stats_path}")
 
-            # Write per-document aggregates
-            doc_agg = joined_df.groupBy("doc_id", "entity_type").agg(
-                F.count("*").alias("total"),
-                F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched")
+            # Write per-document aggregates with proper fields per spec
+            doc_agg = joined_df.filter(F.col("wiki_page_id").isNotNull()).groupBy("doc_id").agg(
+                F.concat_ws(",", F.collect_set(F.col("wiki_page_id").cast("string"))).alias("joined_page_ids"),
+                F.countDistinct("wiki_page_id").alias("num_joined_pages"),
+                F.sum(F.when(F.col("entity_type") == "TOPICS", 1).otherwise(0)).alias("num_topics_joined"),
+                F.sum(F.when(F.col("entity_type") == "LICENSE", 1).otherwise(0)).alias("num_licenses_joined"),
+                F.sum(F.when(F.col("entity_type") == "LANG_STATS", 1).otherwise(0)).alias("num_langs_joined")
             )
             agg_path = output_dir / "html_wiki_agg.tsv"
-            write_tsv(doc_agg, agg_path, ["doc_id", "entity_type", "total", "matched"], header=True)
+            write_tsv(
+                doc_agg, agg_path,
+                ["doc_id", "joined_page_ids", "num_joined_pages",
+                 "num_topics_joined", "num_licenses_joined", "num_langs_joined"],
+                header=True
+            )
             logger.info(f"Wrote document aggregates to {agg_path}")
 
         # Write manifest
@@ -495,10 +588,11 @@ def main() -> int:
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info(f"Total entities: {stats['total_entities']}")
         logger.info(f"Matched entities: {stats['matched_entities']} ({stats['match_rate']}%)")
-        logger.info(f"Unique Wikipedia pages: {stats['unique_wiki_pages']}")
+        logger.info(f"Unique Wikipedia pages joined: {stats['unique_wiki_pages_joined']}")
+        logger.info(f"Unique docs with wiki matches: {stats['unique_docs_with_wiki']}")
         logger.info("Match rates by type:")
         for entity_type, type_stat in stats['by_type'].items():
-            logger.info(f"  {entity_type}: {type_stat['matched']}/{type_stat['total']} ({type_stat['rate']}%)")
+            logger.info(f"  {entity_type}: {type_stat['matched']}/{type_stat['total']} ({type_stat['rate']}%) - {type_stat['unique_pages']} unique pages")
         logger.info(f"Manifest: {manifest_path}")
         logger.info("=" * 60)
 

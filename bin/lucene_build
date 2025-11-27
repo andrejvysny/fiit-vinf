@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Wrapper script for PyLucene index building via Docker
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+# Check Docker availability
+if ! command -v docker >/dev/null 2>&1; then
+    echo "Error: Docker is required. Please install Docker." >&2
+    exit 1
+fi
+
+# Parse arguments
+BUILD_ARGS=""
+LIMIT=""
+DRY_RUN=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --limit)
+            LIMIT="$2"
+            BUILD_ARGS="$BUILD_ARGS --limit $2"
+            shift 2
+            ;;
+        --dry-run)
+            DRY_RUN="--dry-run"
+            BUILD_ARGS="$BUILD_ARGS --dry-run"
+            shift
+            ;;
+        --text-dir|--entities|--wiki-join|--output)
+            # These are handled by compose, skip
+            shift 2
+            ;;
+        *)
+            BUILD_ARGS="$BUILD_ARGS $1"
+            shift
+            ;;
+    esac
+done
+
+echo "========================================"
+echo "PyLucene Index Builder"
+echo "========================================"
+echo "Text Dir: workspace/store/text"
+echo "Entities: workspace/store/spark/entities/entities.tsv"
+echo "Wiki Join: workspace/store/join/html_wiki.tsv"
+echo "Output: workspace/store/lucene_index"
+[[ -n "${LIMIT:-}" ]] && echo "Limit: ${LIMIT}"
+[[ -n "${DRY_RUN:-}" ]] && echo "Dry Run: enabled"
+echo "========================================"
+
+# Run via Docker Compose
+cd "${PROJECT_ROOT}"
+docker compose run --rm \
+    -e BUILD_ARGS="${BUILD_ARGS}" \
+    lucene-build
+
+echo "========================================"
+echo "PyLucene index build completed"
+echo "========================================"

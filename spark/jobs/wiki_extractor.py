@@ -479,23 +479,36 @@ def main() -> int:
                 F.first("content_length").alias("length")
             )
 
-            # Collect unique texts (should be manageable for test runs)
-            # For production with millions of pages, this might need batching
-            unique_texts = unique_texts_df.collect()
-            logger.info(f"Collected {len(unique_texts)} unique texts for writing")
+            # Write text files in workers using foreachPartition (TB-scale safe)
+            # This avoids collect() which would OOM on large datasets
+            text_dir_str = str(text_dir)
 
-            # Write text files directly on driver
-            text_files_written = 0
-            for row in unique_texts:
-                sha256 = row['content_sha256']
-                content = row['text_content']
-                if sha256 and content:
-                    file_path = text_dir / f'{sha256}.txt'
-                    try:
-                        file_path.write_text(content, encoding='utf-8')
-                        text_files_written += 1
-                    except Exception as e:
-                        logger.warning(f"Failed to write {sha256}.txt: {e}")
+            def write_text_files_partition(iterator):
+                """Write text files for a partition - runs on workers, not driver."""
+                from pathlib import Path
+                import logging
+                log = logging.getLogger("wiki_extractor.text_writer")
+                text_path = Path(text_dir_str)
+                text_path.mkdir(parents=True, exist_ok=True)
+
+                written = 0
+                for row in iterator:
+                    sha256 = row['content_sha256']
+                    content = row['text_content']
+                    if sha256 and content:
+                        file_path = text_path / f'{sha256}.txt'
+                        if not file_path.exists():  # Skip if already written
+                            try:
+                                file_path.write_text(content, encoding='utf-8')
+                                written += 1
+                            except Exception as e:
+                                log.warning(f"Failed to write {sha256}.txt: {e}")
+                # Return count for stats
+                yield written
+
+            # Write files in parallel across workers
+            write_counts_rdd = unique_texts_df.rdd.mapPartitions(write_text_files_partition)
+            text_files_written = write_counts_rdd.sum()  # Safe: just summing integers
 
             logger.info(f"Wrote {text_files_written} unique text files to {text_dir}")
 
@@ -511,7 +524,7 @@ def main() -> int:
 
             unique_text_count = unique_texts_df.count()
             total_text_count = text_metadata_df.count()
-            logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({text_files_written} files written)")
+            logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({int(text_files_written)} files written)")
 
             outputs_written = 8  # 6 original + text_metadata.tsv + text files directory
 

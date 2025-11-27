@@ -4,19 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a multi-stage data pipeline for analyzing public GitHub content with Wikipedia enrichment:
+Multi-stage data pipeline for analyzing public GitHub content with Wikipedia enrichment:
 
-### Core Pipeline
-1. **Crawler** – Fetches HTML from GitHub and writes crawl metadata
-2. **HTML Extractor** – Extracts entities and text from stored HTML
-3. **Indexer** – Builds inverted indexes and enables search
+1. **Crawler** (`crawler/`) – Fetches HTML from GitHub, writes crawl metadata
+2. **HTML Extractor** (`extractor/` + `spark/jobs/html_extractor.py`) – Extracts entities and text from HTML
+3. **Indexer** (`indexer/`) – Builds inverted indexes and enables TF-IDF search
+4. **Wikipedia Extractor** (`spark/jobs/wiki_extractor.py`) – Extracts structured data from 100GB+ Wikipedia XML dumps
+5. **Entity-Wiki Join** (`spark/jobs/join_html_wiki.py`) – Batch join of HTML entities with Wikipedia
+6. **Topics-Wiki Join** (`spark/jobs/join_html_wiki_topics.py`) – Streaming join for TOPICS with relevance filtering
 
-### Wikipedia Extension Pipeline
-4. **Wikipedia Extractor** – Extracts structured data from Wikipedia XML dumps (100GB+) with optional full text
-5. **Entity-Wiki Join (Batch)** – Joins HTML entities with Wikipedia canonical data for entity resolution
-6. **Topics-Wiki JOIN (Streaming)** – **NEW**: Streams GitHub TOPICS entities and joins with relevant Wikipedia articles using category/abstract filtering
-
-The pipeline is loosely coupled through the `workspace/` directory, allowing independent execution or resumption of each stage.
+Stages are loosely coupled through `workspace/` directory.
 
 ## Environment Setup
 
@@ -26,65 +23,67 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-All commands assume the virtual environment is active.
-
 ## Core Commands
 
-### Running the Core Pipeline
+### Pipeline Stages
 
 ```bash
-# 1. Crawl GitHub (writes to workspace/store/html/)
+# 1. Crawl GitHub
 python -m crawler --config config.yml
 
-# 2. Extract entities and text (two options):
-
-# Option A: PySpark extractor (preferred for large datasets)
+# 2. Extract entities (Spark preferred, --local for fallback)
 bin/spark_extract --config config.yml
-
-# Option B: Legacy single-process extractor
-python -m extractor --config config.yml
-
-# Fall back to legacy extractor if Docker unavailable:
-bin/spark_extract --local --config config.yml
+bin/spark_extract --local --config config.yml  # Without Docker
 
 # 3. Build search index
 python3 -m indexer.build --config config.yml
 
-# 4. Query the index
-python3 -m indexer.query --config config.yml --query "your search terms"
+# 4. Query index
+python3 -m indexer.query --config config.yml --query "your terms"
 ```
 
-### Running the Wikipedia Extension Pipeline
+### Wikipedia Pipeline
 
 ```bash
-# 1. Extract Wikipedia data from XML dump (100GB+, requires 16-32GB RAM)
-# Test first:
+# Test first (100 pages)
 bin/spark_wiki_extract --wiki-max-pages 100 --partitions 8
 
-# Full extraction (~2-3 hours):
-SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g \
-bin/spark_wiki_extract --partitions 512
+# Full extraction (requires 16-32GB RAM, 2-3 hours)
+SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g bin/spark_wiki_extract --partitions 512
 
-# 2. Join HTML entities with Wikipedia (batch)
+# Batch join (entities → Wikipedia)
 bin/spark_join_wiki \
   --entities workspace/store/entities/entities.tsv \
   --wiki workspace/store/wiki \
   --out workspace/store/join
 
-# 3. Join TOPICS with Wikipedia (streaming, requires Java 11 or 17)
+# Streaming TOPICS join (requires Java 11 or 17, not 24)
 bin/spark_join_wiki_topics \
   --entities workspace/store/spark/entities/entities.tsv \
   --wiki workspace/store/wiki \
   --out workspace/store/wiki/join
 ```
 
-**Key Differences**:
-- Wikipedia extraction runs standalone (no config.yml dependency)
-- Uses streaming architecture to handle 100GB+ files without OOM errors
-- Topics JOIN uses PySpark Structured Streaming for incremental processing
-- All commands are wrapper scripts around Spark
-- Full Wikipedia extraction requires significantly more RAM than HTML extraction
-- **Java Compatibility**: Streaming jobs require Java 11 or 17 (not Java 24 due to Spark 4.0.1 limitations)
+### PyLucene Index (Advanced Queries)
+
+```bash
+# Build PyLucene index
+python -m lucene_indexer.build \
+  --text-dir workspace/store/text \
+  --entities workspace/store/entities/entities.tsv \
+  --wiki-join workspace/store/join/html_wiki.tsv \
+  --output workspace/store/lucene_index
+
+# Search with different query types
+python -m lucene_indexer.search --query "python web" --type simple
+python -m lucene_indexer.search --query "python AND docker" --type boolean
+python -m lucene_indexer.search --field star_count --min-value 1000 --type range
+python -m lucene_indexer.search --query "machine learning" --type phrase
+python -m lucene_indexer.search --query "pyhton" --type fuzzy
+
+# Compare TF-IDF vs Lucene
+python -m lucene_indexer.compare --queries "python,docker,web" --output reports/comparison.md
+```
 
 ### Testing
 
@@ -95,329 +94,147 @@ python -m unittest discover tests
 # Run specific test files
 python -m unittest tests.test_regexes
 python -m unittest tests.test_link_extractor
+python -m unittest tests.test_wiki_regexes
+python -m unittest tests.test_spark_extractor
+
+# Run single test method
+python -m unittest tests.test_regexes.TestRegexes.test_stars_pattern
 ```
 
-### Useful Flags
+## Key CLI Flags
 
-**HTML Extractor (`bin/spark_extract`):**
-- `--sample N` – Process only first N files (for smoke tests)
-- `--force` – Overwrite existing outputs
-- `--dry-run` – List files without processing
-- `--partitions N` – Number of Spark partitions (default: 64)
-- `--local` – Fallback to Python extractor (no Docker)
-- `--config PATH` – Custom config file
+| Tool | Flag | Purpose |
+|------|------|---------|
+| `bin/spark_extract` | `--sample N` | Process first N files |
+| `bin/spark_extract` | `--force` | Overwrite outputs |
+| `bin/spark_extract` | `--dry-run` | List files without processing |
+| `bin/spark_extract` | `--local` | Fallback to Python (no Docker) |
+| `bin/spark_wiki_extract` | `--wiki-max-pages N` | Limit pages for testing |
+| `bin/spark_wiki_extract` | `--no-text` | Skip full text extraction |
+| `bin/spark_join_wiki` | `--entities-max-rows N` | Limit entities for testing |
+| `bin/spark_join_wiki_topics` | `--maxFilesPerTrigger N` | Bounded memory (default: 16) |
+| `bin/spark_join_wiki_topics` | `--clean` | Reset checkpoints |
+| `indexer.build` | `--limit N` | Process N documents |
+| `indexer.query` | `--top N` | Return top N results |
+| `lucene_indexer.build` | `--limit N` | Limit docs for PyLucene index |
+| `lucene_indexer.search` | `--type TYPE` | Query type (simple/boolean/range/phrase/fuzzy) |
+| `lucene_indexer.compare` | `--queries Q` | Compare TF-IDF vs Lucene results |
 
-**Wikipedia Extractor (`bin/spark_wiki_extract`):**
-- `--wiki-max-pages N` – Process only first N pages (for testing, default: all)
-- `--wiki-in DIR` – Input directory with Wikipedia dumps (default: wiki_dump)
-- `--out DIR` – Output directory (default: workspace/store/wiki)
-- `--partitions N` – Number of Spark partitions (default: 256, auto-scales for large files)
-- `--log FILE` – Log file path (default: logs/wiki_extract.jsonl)
-- `--dry-run` – List files without processing
-- `--extract-text` / `--no-text` – Enable/disable full text extraction (default: enabled)
-
-**Entity-Wikipedia Join (Batch) (`bin/spark_join_wiki`):**
-- `--entities FILE` – Path to entities.tsv (required)
-- `--wiki DIR` – Directory with Wikipedia TSV files (required)
-- `--out DIR` – Output directory (default: workspace/store/join)
-- `--entities-max-rows N` – Limit entity rows for testing
-- `--partitions N` – Number of Spark partitions (default: 64)
-- `--dry-run` – Preview without writing outputs
-
-**Topics-Wikipedia JOIN (Streaming) (`bin/spark_join_wiki_topics`):**
-- `--entities FILE` – Path to entities TSV (required)
-- `--wiki DIR` – Wiki dimensions directory (required)
-- `--out DIR` – Output directory (default: workspace/store/wiki/join)
-- `--checkpoint DIR` – Checkpoint directory for streaming state (default: workspace/store/wiki/join/_chkpt/topics)
-- `--maxFilesPerTrigger N` – Max files per streaming batch (default: 16, lower for less memory)
-- `--relevantCategories KW` – Comma-separated relevance keywords (default: programming,software,computer,library,framework,license)
-- `--absHit BOOL` – Enable abstract matching (default: true)
-- `--clean` – Clean checkpoint and output dirs
-
-**Indexer Build:**
-- `--limit N` – Process only N documents
-- `--dry-run` – Calculate stats without writing files
-- `--idf-method METHOD` – Choose IDF weighting (classic, smoothed, probabilistic, max)
-
-**Indexer Query:**
-- `--top N` – Return top N results (default: 10)
-- `--show-path` – Display absolute document paths
-- `--idf-method METHOD` – Override IDF method for query
-
-## Architecture Details
+## Architecture
 
 ### Data Flow
 
-#### Core Pipeline
 ```
 config.yml → crawler → workspace/store/html/
-                    → workspace/metadata/crawl_metadata.jsonl
-                    → workspace/state/frontier.jsonl
+                     → workspace/metadata/crawl_metadata.jsonl
 
 workspace/store/html/ → extractor → workspace/store/text/
                                   → workspace/store/entities/entities.tsv
 
 workspace/store/text/ → indexer.build → workspace/store/index/
-                                      → docs.jsonl
-                                      → postings.jsonl
-                                      → manifest.json
 
-workspace/store/index/ → indexer.query → ranked search results
-```
+wiki_dump/*.xml → wiki_extractor → workspace/store/wiki/*.tsv
+                                 → workspace/store/wiki/text/*.txt
 
-#### Wikipedia Extension Pipeline
-```
-wiki_dump/*.xml → wiki_extractor (Spark) → workspace/store/wiki/
-                                          → pages.tsv
-                                          → categories.tsv
-                                          → links.tsv
-                                          → infobox.tsv
-                                          → abstract.tsv
-                                          → aliases.tsv
-                                          → wiki_text_metadata.tsv (NEW)
-                                          → text/*.txt (NEW: full article text)
-
-workspace/store/entities/entities.tsv + workspace/store/wiki/ → join_html_wiki (Spark Batch)
-                                                               → workspace/store/join/
-                                                               → html_wiki.tsv
-                                                               → join_stats.json
-                                                               → html_wiki_agg.tsv
-
-workspace/store/spark/entities/entities.tsv + workspace/store/wiki/ → join_html_wiki_topics (Spark Streaming)
-                                                                     → workspace/store/wiki/join/
-                                                                     → html_wiki_topics_output/*.csv
-                                                                     → html_wiki_topics_stats.tsv
-                                                                     → _chkpt/topics/ (checkpoints)
+entities.tsv + wiki/*.tsv → join_html_wiki → workspace/store/join/
+                          → join_html_wiki_topics → workspace/store/wiki/join/
 ```
 
 ### Key Components
 
-**Crawler (`crawler/`)**:
-- `service.py` – Main `CrawlerScraperService` orchestrates crawling
-- `crawl_frontier.py` – File-backed URL queue with deduplication
-- `crawl_policy.py` – Robots.txt-aware policy enforcement
-- `unified_fetcher.py` – HTTP retrieval with retry logic
-- `metadata_writer.py` – JSONL metadata logging
+**Crawler** (`crawler/`):
+- `service.py` – Main `CrawlerScraperService` orchestrator
+- `crawl_frontier.py` – File-backed URL queue with dedup
+- `crawl_policy.py` – Robots.txt-aware policy
+- `unified_fetcher.py` – HTTP retrieval with retries
 
-**HTML Extractor (`extractor/`)**:
-- `pipeline.py` – Main `ExtractorPipeline` orchestrator
+**HTML Extractor** (`extractor/`):
+- `pipeline.py` – Main `ExtractorPipeline`
 - `entity_extractors.py` – GitHub metadata extraction (stars, forks, languages)
-- `regexes.py` – Regex patterns for entity detection
-- `html_clean.py` – HTML cleaning and text extraction
-- Spark version in `spark/jobs/html_extractor.py` for parallel processing
+- `regexes.py` – Entity detection patterns (test coverage required)
+- `html_clean.py` – HTML cleaning
 
-**Wikipedia Extractor (`spark/jobs/`)**:
-- `wiki_extractor.py` – Spark job for Wikipedia XML dump extraction (streaming, no caching) with optional full text
-- `join_html_wiki.py` – Spark batch job for entity-Wikipedia join
-- `join_html_wiki_topics.py` – **NEW**: Spark Structured Streaming job for TOPICS-Wikipedia join with relevance filtering
-- `spark/lib/wiki_regexes.py` – Regex patterns for MediaWiki XML parsing, title normalization, and wikitext cleaning
-- Wrapper scripts: `bin/spark_wiki_extract`, `bin/spark_join_wiki`, `bin/spark_join_wiki_topics`
+**Wikipedia Extractor** (`spark/jobs/`):
+- `wiki_extractor.py` – Streaming XML extraction (NO caching)
+- `join_html_wiki.py` – Batch entity-Wikipedia join
+- `join_html_wiki_topics.py` – Structured Streaming TOPICS join
+- `spark/lib/wiki_regexes.py` – MediaWiki parsing patterns
 
-**Indexer (`indexer/`)**:
-- `build.py` – CLI for building inverted index
-- `query.py` – CLI for searching the index
+**Indexer** (`indexer/`):
+- `build.py` – Index builder CLI
+- `query.py` – Search CLI
 - `search.py` – TF-IDF scoring engine
-- `ingest.py` – Document tokenization and vocabulary building
-- `idf.py` – Multiple IDF calculation strategies
-- `compare.py` – Generate reports comparing IDF methods
+- `idf.py` – IDF strategies (classic, smoothed, probabilistic, max)
 
-### Spark Extractor Architecture
-
-The Spark-based extractor (`spark/jobs/html_extractor.py`) provides parallel processing:
-- Uses Docker Compose to spin up Spark master/worker
-- Loads text via `wholeTextFiles` for distributed processing
-- Tokenization runs as Spark UDF (`spark/lib/tokenize.py`)
-- Regex extraction happens per-partition (`spark/lib/regexes.py`)
-- Outputs TSV files: lexicon, postings, docstore, entities
-- Writes manifest with SHA-1 checksums for reproducibility
-
-Access via `bin/spark_extract` wrapper script. Use `--local` flag to fall back to single-process extractor if Docker is unavailable.
+**PyLucene Indexer** (`lucene_indexer/`):
+- `schema.py` – Index schema with field definitions and justifications
+- `build.py` – Index builder with entity and wiki enrichment
+- `search.py` – Search engine with Boolean, Range, Phrase, Fuzzy queries
+- `compare.py` – Query comparison between TF-IDF and Lucene indexes
 
 ### Workspace Layout
 
 | Path | Producer | Purpose |
 |------|----------|---------|
 | `workspace/state/frontier.jsonl` | crawler | Pending URLs queue |
-| `workspace/state/fetched_urls.txt` | crawler | Deduplication ledger |
-| `workspace/state/service_stats.json` | crawler | Runtime metrics |
-| `workspace/store/html/` | crawler | HTML snapshots (SHA256 filenames) |
-| `workspace/metadata/crawl_metadata.jsonl` | crawler | Fetch metadata |
+| `workspace/state/fetched_urls.txt` | crawler | Dedup ledger |
+| `workspace/store/html/` | crawler | HTML snapshots (SHA256 names) |
 | `workspace/store/text/` | extractor | Raw text files |
 | `workspace/store/entities/entities.tsv` | extractor | Entity annotations |
-| `workspace/store/index/` | indexer | Index artifacts |
-| `workspace/store/wiki/*.tsv` | wiki_extractor | Wikipedia structured data (7 TSV files) |
-| `workspace/store/wiki/text/*.txt` | wiki_extractor | **NEW**: Full article text (SHA256-named) |
-| `workspace/store/join/*.tsv` | join_html_wiki | Entity-Wikipedia batch join results |
-| `workspace/store/wiki/join/html_wiki_topics_output/` | join_html_wiki_topics | **NEW**: TOPICS streaming join results |
-| `workspace/store/wiki/join/_chkpt/` | join_html_wiki_topics | **NEW**: Streaming checkpoints |
-| `workspace/logs/` | all | Module logs |
-| `logs/wiki_extract.jsonl` | wiki_extractor | Wikipedia extraction structured logs |
-| `logs/wiki_join.jsonl` | join_html_wiki | Join pipeline structured logs |
+| `workspace/store/index/` | indexer | TF-IDF index artifacts |
+| `workspace/store/lucene_index/` | lucene_indexer | PyLucene index |
+| `workspace/store/wiki/*.tsv` | wiki_extractor | Wikipedia structured data (7 files) |
+| `workspace/store/wiki/text/*.txt` | wiki_extractor | Full article text (SHA256 names) |
+| `workspace/store/join/*.tsv` | join_html_wiki | Batch join results |
+| `workspace/store/wiki/join/` | join_html_wiki_topics | Streaming join results |
 
-**Important:** `workspace/` is runtime scratch space. Keep it out of version control.
+## Implementation Notes
 
-### Configuration (`config.yml`)
+### Spark Memory Configuration
 
-Single YAML file controls all three stages:
-- `workspace` – Root path for all artifacts
-- `crawler` – Seeds, user agents, scope rules, rate limits, storage paths
+```bash
+# HTML extraction (8-16GB system)
+SPARK_DRIVER_MEMORY=6g SPARK_EXECUTOR_MEMORY=4g bin/spark_extract
+
+# Wikipedia extraction (16-32GB system)
+SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g bin/spark_wiki_extract
+
+# For OOM errors: increase driver memory and partitions
+SPARK_DRIVER_MEMORY=16g bin/spark_wiki_extract --partitions 1024
+```
+
+### Critical Constraints
+
+- **Wikipedia extractor**: Uses streaming with NO caching. Never add `.cache()` calls.
+- **Topics streaming join**: Requires Java 11 or 17 (not 24). Check with `java -version`.
+- **Regex changes**: Must have test coverage in `tests/test_regexes.py`.
+- **Entity TSV**: Streaming-safe, headers emitted once per invocation.
+- **Document IDs**: Derived from HTML filename stems for cross-stage consistency.
+
+### Debugging
+
+```bash
+# Check logs
+cat workspace/logs/crawler.log
+cat logs/wiki_extract.jsonl | jq .
+cat logs/wiki_join.jsonl | jq .
+
+# Spark UI (while job running)
+open http://localhost:4040
+
+# Docker container logs
+docker logs vinf-spark-extractor
+
+# Check join statistics
+cat workspace/store/join/join_stats.json | jq .
+```
+
+## Configuration (`config.yml`)
+
+Single YAML controls all stages:
+- `workspace` – Root path for artifacts
+- `crawler` – Seeds, user agents, scope rules, rate limits
 - `extractor` – Input/output paths, feature toggles
-- `indexer` – Build/query defaults, IDF methods, token counting
+- `indexer` – IDF methods, token settings
 
-Override config file: `--config /path/to/config.yml`
-Override individual settings with CLI flags (see `--help` for each module)
-
-## Testing Guidelines
-
-- Tests use Python's `unittest` framework
-- Add regression tests for any regex pattern changes in `extractor/regexes.py`
-- Keep HTML fixtures deterministic (see `tests/test_regexes.py`)
-- Test crawl policy and scope rules with fixtures
-- Run full test suite before committing changes
-
-## Important Implementation Notes
-
-### Crawler
-- Frontier and fetched URL registries are file-backed and survive restarts
-- `CrawlerScraperService.start()` resumes from previous state
-- Scope enforcement (allowed hosts, depth limits, per-repo quotas) happens before fetching
-- Rate limiting combines request spacing with batch pauses
-- Robots.txt cached to `workspace/state/robots_cache.jsonl`
-
-### Extractor
-- Document IDs derived from HTML filename stems for consistency across stages
-- Entity TSV writing is streaming-safe for large datasets
-- Regex patterns in `extractor/regexes.py` must have test coverage in `tests/`
-- HTML cleaning removes boilerplate but preserves content structure
-
-### Indexer
-- Builds deterministic JSONL/JSON artifacts for easy diffing
-- Supports multiple IDF strategies: classic, smoothed, probabilistic, max
-- Document records include optional tiktoken counts (`--use-tokens`)
-- Query layer supports both TF-IDF and BM25-lite scoring
-- Postings include positional information for phrase queries
-
-### Spark Considerations
-
-#### HTML Extractor
-- Runs in Docker with local volume mounts
-- Uses `wholeTextFiles` for distributed text loading
-- Tokenization UDF enables DataFrame-based processing
-- Repartitions by term before aggregation to avoid skew
-- Writes consolidated TSV files (no Spark part files)
-- Generates manifests with SHA-1 checksums for reproducibility
-
-#### Wikipedia Extractor (100GB+ File Handling)
-- **CRITICAL**: Uses streaming architecture with NO caching to prevent OOM errors
-- Processes pages via `mapPartitions` with buffer limits (max 50K lines per page)
-- Auto-scales partitions based on file size (256+ for files > 50GB)
-- Uses `rdd.take(N)` for limits instead of processing all data
-- Writes each output separately to avoid memory buildup
-- **Full text extraction** (optional, enabled by default):
-  - Cleans wikitext markup (templates, links, refs, HTML tags) via `clean_wikitext_to_plaintext()`
-  - Uses SHA256 content addressing for deduplication (identical articles stored once)
-  - Outputs `wiki_text_metadata.tsv` (page_id → SHA256 mapping) and `text/*.txt` files
-  - Template removal limited to max 10 iterations to prevent infinite loops
-  - Use `--no-text` to disable if only structured data needed
-- Memory configuration:
-  - Test mode (≤1000 pages): 4g driver, 2g executor
-  - Full mode: 12g driver, 6g executor (minimum for 100GB+ dumps)
-  - Off-heap memory: 2g
-  - Memory fraction: 0.8 for large files
-- **Do NOT** add `.cache()` calls to Wikipedia extraction code - this will cause OOM
-
-#### Entity-Wikipedia Join (Batch)
-- Caches canonical mapping (small, < 500MB) for reuse
-- Uses Spark AQE for adaptive query optimization
-- TOPICS entities are exploded (comma-separated → multiple rows)
-- Confidence scoring via UDF
-- Typical memory: 6g driver, 3g executor
-- Much faster than extraction (< 10 minutes)
-
-#### Topics-Wikipedia JOIN (Structured Streaming)
-- **NEW**: Spark Structured Streaming architecture for incremental processing
-- Bounded memory via `maxFilesPerTrigger` parameter (default: 16 files per batch)
-- Streams TOPICS entities and joins with static Wikipedia dimensions (pages, aliases, categories, abstracts)
-- Multi-hop join logic:
-  1. Normalize topic text (lowercase, ASCII-fold, punct collapse)
-  2. Resolve aliases (redirects) to canonical titles
-  3. Join to pages by normalized title
-  4. Aggregate categories by page_id
-  5. Join abstracts by page_id
-  6. Filter for relevance (category keywords OR abstract contains entity)
-- Relevance filtering:
-  - Category substring matching (default keywords: programming, software, computer, library, framework, license)
-  - Abstract text contains normalized entity value
-- Confidence scoring: exact+cat, alias+cat, exact+abs, alias+abs
-- No broadcasts or large in-memory collections
-- Checkpoint-based state management for resumability
-- Per-batch statistics via `foreachBatch`
-- Typical memory: 4g driver, 2g executor
-- Duration: 2-5 minutes for full dataset
-- **Java requirement**: Java 11 or 17 (Java 24 incompatible with Spark 4.0.1)
-
-## Common Operational Patterns
-
-**Starting a new crawl:**
-1. Update `config.yml` seeds and scope rules
-2. Clear or backup `workspace/state/` if starting fresh
-3. Run crawler and monitor `workspace/logs/crawler.log`
-4. Check `workspace/state/service_stats.json` for metrics
-
-**Iterating on HTML extraction rules:**
-1. Modify patterns in `extractor/regexes.py`
-2. Add test cases in `tests/test_regexes.py`
-3. Run `python -m unittest tests.test_regexes`
-4. Test on small sample: `bin/spark_extract --sample 100`
-5. Use `--force` to overwrite existing outputs
-
-**Running Wikipedia extraction:**
-1. Download Wikipedia dump to `wiki_dump/` directory (104GB uncompressed XML)
-2. Test with small sample: `bin/spark_wiki_extract --wiki-max-pages 100`
-3. Verify outputs created: `ls -lh workspace/store/wiki/`
-4. Run full extraction (requires 16-32GB RAM): `SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g bin/spark_wiki_extract --partitions 512`
-5. Expected duration: 2-3 hours for ~7M pages
-6. Monitor progress via Spark UI: http://localhost:4040
-
-**Running entity-Wikipedia join (batch):**
-1. Ensure both inputs exist: `workspace/store/entities/entities.tsv` and `workspace/store/wiki/*.tsv`
-2. Test with sample: `bin/spark_join_wiki --entities workspace/store/entities/entities.tsv --wiki workspace/store/wiki --out workspace/store/join --entities-max-rows 10000`
-3. Check match statistics: `cat workspace/store/join/join_stats.json | jq .`
-4. Run full join: `bin/spark_join_wiki --entities workspace/store/entities/entities.tsv --wiki workspace/store/wiki --out workspace/store/join`
-
-**Running Topics-Wikipedia streaming join:**
-1. **Check Java version**: `java -version` (must be Java 11 or 17, not 24)
-2. If Java 24, install Java 17: `brew install openjdk@17 && export JAVA_HOME=$(/usr/libexec/java_home -v 17)`
-3. Ensure inputs exist: `workspace/store/spark/entities/entities.tsv` and `workspace/store/wiki/*.tsv`
-4. Test with one file per batch: `bin/spark_join_wiki_topics --maxFilesPerTrigger 1`
-5. Check output: `ls -lh workspace/store/wiki/join/` (should have `html_wiki_topics_output/`, `html_wiki_topics_stats.tsv`, `_chkpt/`)
-6. View statistics: `cat workspace/store/wiki/join/html_wiki_topics_stats.tsv`
-7. Run full join: `bin/spark_join_wiki_topics` (default 16 files per batch)
-8. To restart from scratch: `bin/spark_join_wiki_topics --clean` then re-run
-9. Adjust relevance filtering: `bin/spark_join_wiki_topics --relevantCategories "python,javascript,golang"`
-
-**Building and testing index:**
-1. Run `python3 -m indexer.build` with appropriate limits
-2. Test queries: `python3 -m indexer.query --query "test"`
-3. Compare IDF methods: `python3 -m indexer.compare`
-4. Review reports in `reports/` directory
-
-**Debugging issues:**
-- Check logs in `workspace/logs/` (crawler, extractor, indexer)
-- Check Spark logs in `logs/wiki_extract.jsonl` and `logs/wiki_join.jsonl`
-- Inspect service stats in `workspace/state/service_stats.json`
-- Use `--dry-run` to preview without side effects
-- Use `--verbose` for debug-level logging (Python extractors)
-- For Spark issues:
-  - Check Docker container logs: `docker logs vinf-spark-extractor`
-  - View Spark UI while running: http://localhost:4040
-  - Check manifests in `runs/*/manifest.json`
-- For Wikipedia extraction OOM errors:
-  - Increase driver memory (most important): `SPARK_DRIVER_MEMORY=16g`
-  - Increase partitions: `--partitions 1024`
-  - Verify system has enough free RAM: `free -h` (Linux) or Activity Monitor (macOS)
-  - Close other applications to free memory
-- For slow Wikipedia extraction:
-  - Verify using uncompressed XML (not .bz2)
-  - Increase partitions for better parallelism
-  - Check CPU usage is near 100%: `docker stats`
+Override with `--config /path/to/config.yml` or individual CLI flags.

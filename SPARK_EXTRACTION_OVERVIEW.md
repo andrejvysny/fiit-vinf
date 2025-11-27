@@ -134,17 +134,6 @@
 | Partitions | 64 | 64 | 64 |
 | Output Dir | `workspace/store/spark` | `workspace/store/wiki` | `workspace/store/join` |
 
-## Limits & Thresholds
-
-| Limit | Value | Description |
-|-------|-------|-------------|
-| Max page buffer | 50,000 lines | Pages exceeding skipped |
-| Max infobox fields | 20 per page | Infobox extraction limit |
-| Abstract length | 1,000 chars | Abstract truncation |
-| Large file threshold | 50GB | Triggers partition scaling (64→256) |
-| Small sample | ≤500 files | Triggers lower memory (2g/1g) |
-| Full Wikipedia dump | ~7M pages | Main namespace articles |
-
 ## Performance Benchmarks
 
 | Job | Dataset Size | Duration | Driver | Executor | Partitions |
@@ -155,9 +144,6 @@
 | Wiki Extract | 1,000 pages | 3-5 min | 4g | 2g | 32 |
 | Wiki Extract | Full dump (~7M) | 1.5-3h | 12-16g | 6-8g | 512-1024 |
 
-## Python vs Spark Extractor Performance Comparison
-
-**Test Environment**: macOS Darwin 24.6.0, Docker on Apple Silicon
 
 ### Results Summary
 
@@ -168,43 +154,3 @@
 | 500 files   | 22.75s          | 19.84s                  | 12.37s         | 197,284           | +13% ✅    |
 | 1000 files  | 44.35s          | 26.17s                  | 18.93s         | 395,847           | +41% ✅    |
 
-### Key Insights
-
-**1. Spark Overhead (~7-8 seconds)**
-- Docker container startup
-- `pip install` dependencies
-- Spark context initialization
-- This fixed overhead makes Python faster for small datasets
-
-**2. Crossover Point: ~400-500 files**
-- Python: Linear scaling (~0.045s per file)
-- Spark: Better parallelization, slower startup
-- At 500 files: Spark becomes 13% faster (19.84s vs 22.75s)
-
-**3. Validated Scalability**
-- **1000 files** (measured): Python 44.35s, Spark 26.17s (41% faster) ✅
-  - Prediction accuracy: 98% for Python, 96% for Spark
-- **5000 files** (projected): Python ~220s, Spark ~55s (75% faster)
-- **28000 files** (projected): Python ~1240s (21min), Spark ~300-600s (5-10min per existing benchmarks)
-
-**4. Data Correctness**
-- Both extractors produce identical entity counts at all sample sizes
-- Validates that Spark implementation matches Python behavior
-
-### Recommendation
-
-- **< 500 files**: Use Python extractor (`python -m extractor`)
-  - Avoids 7-8s Spark overhead
-  - Simpler setup (no Docker required)
-
-- **500-1000 files**: Spark begins to show advantage
-  - 500 files: 13% faster
-  - 1000 files: 41% faster
-
-- **≥ 1000 files**: Use Spark extractor (`bin/spark_extract`)
-  - Significantly faster (41%+ time savings)
-  - Gap widens with larger datasets
-
-- **Production datasets (10K+ files)**: Spark is essential
-  - Python would take ~7-21 minutes for 10K-28K files
-  - Spark completes in 5-10 minutes
