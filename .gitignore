@@ -5,3 +5,5 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+./demo/
+wiki_dump/

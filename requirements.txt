@@ -5,9 +5,9 @@ httpx[http2]>=0.27.0
 
 # YAML configuration
 pyyaml>=6.0
-
+tiktoken>=0.5.0
 # HTML parsing for link extraction
-beautifulsoup4>=4.12.0
+#beautifulsoup4>=4.12.0
 
 # Note: reppy has build issues on Python 3.13, using urllib.robotparser instead
 
@@ -16,6 +16,16 @@ beautifulsoup4>=4.12.0
 
 # Optional: For compressed storage (if needed later)
 # zstandard>=0.22.0
+
+# Spark dependencies (for distributed processing)
+pyspark>=3.5.0
+pandas>=2.0.0
+pyarrow>=14.0.0
+
+# PyLucene (requires manual installation - see PYLUCENE_INSTALL.md)
+# PyLucene must be built from source with system JDK
+# See: https://lucene.apache.org/pylucene/install.html
+# lucene  # Not pip-installable, requires source build
 
 # Development dependencies
 # pytest>=8.0.0

@@ -1,0 +1,24 @@
+{
+  "timestamp": "2025-11-13T01:39:32.734375",
+  "duration_seconds": 43.43,
+  "input": "/opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml",
+  "input_size_gb": 111.46,
+  "max_pages": 1000,
+  "outputs": {
+    "pages": "/opt/app/workspace/store/wiki/pages.tsv",
+    "categories": "/opt/app/workspace/store/wiki/categories.tsv",
+    "links": "/opt/app/workspace/store/wiki/links.tsv",
+    "infobox": "/opt/app/workspace/store/wiki/infobox.tsv",
+    "abstracts": "/opt/app/workspace/store/wiki/abstract.tsv",
+    "aliases": "/opt/app/workspace/store/wiki/aliases.tsv"
+  },
+  "stats": {
+    "pages": 953,
+    "outputs_written": 6,
+    "files_processed": 1
+  },
+  "spark_config": {
+    "driver_memory": "4g",
+    "partitions": 64
+  }
+}

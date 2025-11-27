@@ -1,0 +1,377 @@
+====== 1. Odovzdanie ======
+
+===== Cieľ projektu =====
+
+Zhromaždiť a normalizovať GitHub dáta (repozitáre, topics, issues, pull requesty), priorizované polia pre extrakciu entít: stars, forks, jazyky/technológie, contributors, PR, README, licencie, projektové URL, s dôrazom na etické crawlovanie (robots.txt, identifikovateľný user agent, nízky rate).
+
+
+
+**Výsledok implementácie**: 
+  - pipeline  **crawl → extrakcia → index → vyhľadávanie**
+  - Persistencia HTML a iných dát v priečinku `workspace/store/`
+  - Extrakcia textu a entít z HTML stránok pomocou Regexov
+  - Tvorba jednoduchého invertovaného indexu s viac IDF metódami
+
+
+
+=====  Zdrojové stránky a extrahované dáta - Ukážky =====
+
+
+| URL / doména | Popis obsahu | Extrahované atribúty (min. 5 ukážok) | Poznámky |
+| https://github.com/python/cpython | Repozitár CPythonu (root) | - `STAR_COUNT: 69 369`<br>- `FORK_COUNT: 33 101`<br>- `LICENSE link: /python/cpython/blob/main/LICENSE`<br>- `README_SECTION: "This is Python version 3.15.0..."`<br>- `VERSION: 3.15.0` | doc_id `d44f9b6…`; `page_type=repo_root`; HTML uložené v `workspace/store/html/d4/4f/...`; entity v `workspace/store/entities/entities.tsv`. |
+| https://github.com/torvalds/linux | Repozitár Linux kernelu | - `STAR_COUNT: 205 018`<br>- `FORK_COUNT: 57 875`<br>- `LICENSE link: /torvalds/linux/tree/master/LICENSES`<br>- `README_SECTION: "Linux kernel There are several guides..."`<br>- `URL: https://www.kernel.org/doc/html/latest/` | doc_id `df769559…`; repo snapshot v `workspace/store/html/df/76/...`; entitné záznamy v TSV. |
+| https://github.com/tensorflow/tensorflow | TensorFlow – machine learning platform | - `STAR_COUNT: 192 060`<br>- `FORK_COUNT: 74 912`<br>- `LICENSE: Apache-2.0`<br>- `VERSION: 2.20.0`<br>- `EMAIL: announce@tensorflow.org` | doc_id `44d90d0e…`; HTML uložené v `workspace/store/html/44/d9/...`; entity v `workspace/store/entities/entities.tsv`. |
+| https://github.com/kubernetes/kubernetes | Kubernetes – container orchestration | - `STAR_COUNT: 118 008`<br>- `FORK_COUNT: 41 525`<br>- `LICENSE: Apache-2.0`<br>- `VERSION: 1.34.1`<br>- `README_SECTION: "Kubernetes (K8s) ... open source system for managing containerized applications"` | doc_id `8b452ba3…`; `page_type=repo_root`; dáta v `workspace/store/html/8b/45/...` a TSV. |
+| https://github.com/facebook/react | React – UI library | - `STAR_COUNT: 239 805`<br>- `FORK_COUNT: 49 593`<br>- `LICENSE: MIT`<br>- `VERSION: 19.2.0`<br>- `README_SECTION: "React is a JavaScript library for building user interfaces"` | doc_id `d5025a1…`; uložené v `workspace/store/html/d5/02/...`; entitné záznamy dostupné v TSV. |
+| https://github.com/nodejs/node | Node.js runtime | - `STAR_COUNT: 113 797`<br>- `FORK_COUNT: 33 490`<br>- `LICENSE: MIT`<br>- `VERSION: 22.0.0`<br>- `EMAIL: duhamelantoine1995@gmail.com` | doc_id `8c9f250c…`; HTML v `workspace/store/html/8c/9f/...`; entitné výstupy v `workspace/store/entities/entities.tsv`. |
+| https://github.com/metatube-community/jellyfin-plugin-metatube | MetaTube plug-in pre Jellyfin/Emby | - `STAR_COUNT: 3 816`<br>- `FORK_COUNT: 308`<br>- `LICENSE: MIT`<br>- `VERSION: 2025.1025.2000`<br>- README linky na `https://github.com/jellyfin/jellyfin` a klientov | doc_id `1bf2ee91…`; HTML v `workspace/store/html/1b/f2/...`; entitné výstupy v TSV (vrátane `URL` entít na Jellyfin server). |
+
+
+Ukážky pochádzajú z extrakcie entít a textov – `workspace/store/entities/entities2.tsv`, `workspace/store/text/*`
+
+
+
+
+
+===== Q&A scenáre =====
+
+Otázka 1: „Nájdi mi open-source softvér pre domácu multimediálnu knižnicu.“
+
+Odpoveď: metatube-community/jellyfin-plugin-metatube (3 816 hviezdičiek, 308 forkov; dokument 1bf2ee91…) je súčasť ekosystému Jellyfin a README obsahuje priamy odkaz na server https://github.com/jellyfin/jellyfin (zachytený ako URL entita v dokumente 020b94b9… – jaywcjlove/awesome-mac).
+
+Súvisiace zdroje: wiki .NET, FFmpeg pre technický kontext a plánované prepojenie na Emby.
+
+
+Otázka 2: „V akom jazyku je napísaný Jellyfin?“
+
+Odpoveď: Dataset obsahuje odkazy na Jellyfin ekosystém (napr. dokument 020b94b9… → URL na https://github.com/jellyfin/jellyfin) a súvisiace projekty. Samotnú informáciu o jazyku servera nemáme ako samostatnú entitu; dá sa overiť priamo v uložených stránkach.
+
+
+Otázka 3: „Má Jellyfin aplikácie pre mobilné zariadenia?“
+
+Odpoveď: Áno – dataset zachytáva projekty ako Swiftfin: Jellyfin Client (dokument 2ca6f462…, sekcia README_SECTION v katalógu open-source iOS apps) a Android klientov (Cinetry v dokumente 566c758a…).
+Doplňujúce informácie: README metatube-community/jellyfin-plugin-metatube uvádza ďalšie oficiálne klienty.
+
+Otázka 4: „Aké jazyky sa používajú v pôvodnom Linux Kernel?“
+
+Odpoveď: Percentuálne zloženie jazykov nie je v súčasnej extrakcii zapísané ako entita pre tento dokument. Stránka torvalds/linux je v datasete (df769559…); detail je možné manuálne overiť v uloženom HTML.
+
+Otázka 5: „Kto stojí za vývojom Linuxu?“
+
+Odpoveď: Repozitár torvalds/linux patrí Linusovi Torvaldsovi; wiki https://sk.wikipedia.org/wiki/Linus_Torvalds sumarizuje jeho úlohu.
+
+Otázka 6: „Aký iný softvér Linus vytvoril?“
+
+Odpoveď: Linus Torvalds inicioval aj Git; odkazujeme na https://sk.wikipedia.org/wiki/Git_(softv%C3%A9r) a tieto linky sú uchovávané v prílohách.
+
+
+
+
+
+====== Použité technológie ======
+
+| Vrstva | modul / knižnica | Poznámka |
+| Crawler | asyncio, httpx, yaml, json, hashlib | Asynchrónne HTTP/2 volania s retry/backoff, načítanie YAML konfigurácie, perzistentné JSONL metadáta, SHA-256 adresovanie HTML |
+| Policy a odkazy | re, urllib.parse, html | Regex extraktor na `<a>` tagy, canonicalizácia a filtrácia URL, HTML entity unescape |
+| Extraktor | Vlastný modul `extractor/*` – standard library (re, json, html) | Regex-only čistenie GitHub UI, tvorba TSV, deduplikácia entít, samostatné spracovanie README. |
+| Indexer | Vlastný modul `indexer/*` (argparse, math, json, Pathlib) | Index build/query/compare s TF výpočtom, viacerými IDF, JSONL zápis |
+| Reporting & analýza | `tools/*` (štandardná knižnica) | Generuje Markdown/CSV štatistiky (počty dokumentov, page-type breakdown, runtime, statusy) |
+| Testovanie | unittest | Priečinok **tests** |
+
+
+
+===== Architektúra  =====
+
+==== Crawler ====
+
+{{:user:andrej.vysny:mermaid_chart_-_create_complex_visual_diagrams_with_text.-2025-10-15-202603.png?400|}}
+
+
+  - `main.py` → načíta `config.yaml`, `seeds.txt`, spúšťa `CrawlerScraperService`.
+  - Služba inicializuje frontier (disk-backed queue), fetcher, policy, metadata writer a link extractor (BFS).
+  - Každý URL: fetch + ukladanie HTML (content-addressed), zapisovanie metadát (HTTP status, veľkosť, UA, latencia).
+  - Extrahované odkazy prechádzajú cez `CrawlPolicy` (allowlist, robots.txt cache, deny patterns, per-repo caps).
+  - Periodické per-request a batch spánky regulujú tempo; frontier a štatistiky sa zapisujú každých 60 s.
+
+
+==== Popis celej pipeliny: ====
+
+  - **Crawler:** `python main.py` -> Spúšťa Cralwer a Scraper pre sťahovanie Github dát 
+  - **Extractor:** `python -m extractor` -> Extrakcia text/README/entity z uložených HTML súborov
+  - **Indexer:** `python -m indexer.build` -> Generuje Invertovaný index
+  - **Indexer:** `python -m indexer.query/compare` -> vyhľadávanie/analýza
+
+
+
+
+===== Metadáta pri crawlovaní =====
+
+| Dokument | URL | HTTP stav | Page type | Veľkosť | Ďalšie meta |
+| `d44f9b6b7bf81bd8cd7b8b7fb0fb9a06316fd11ddb0d1e2fc9cd0967e0a4ada5` | https://github.com/python/cpython | 200 | repo_root | 381.76 KB | Latencia 863.3 ms, UA `ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)`, uložené v `workspace/store/html/d4/4f/...html`. |
+| `df76955945858d1597325eef7ee46d4f02ff2c11bc260806ccfec4c9aa79272d` | https://github.com/torvalds/linux | 200 | repo_root | 305.07 KB | Latencia 646.7 ms, UA `ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)`, hash `df769559…`. |
+| `0002297ed0450b8dbb47cfd695075755b36ce04247e6e47aa6482dbb5018790b` | https://github.com/topics/sqlmodel | 200 | topic | 491.03 KB | Latencia 1120.3 ms, UA `Mozilla/5.0 … Firefox/47.0`, rad `workspace/store/html/00/02/...html`. |
+| `83ee85e79784532a27bbfc8b7c363a2f576b0d44a6c3705223534c4913030e36` | https://github.com/python/cpython/issues/140196 | 200 | issues | 236.94 KB | Latencia 708.5 ms, UA rotácia `ResearchCrawlerBotVINF/2.0`, issue text v preprocessed výstupe. |
+| `1bf2ee9172a1a5e72e84551a36f61772bc95af9a72e9077323762038015a1d8c` | https://github.com/metatube-community/jellyfin-plugin-metatube | 200 | repo_root | 284.48 KB | Latencia 376.1 ms, UA `ResearchCrawlerBotVINF/2.0 (+mailto:xvysnya@stuba.sk)`, README prepája Jellyfin server a klientov. |
+
+
+
+
+===== Hlavičky, timeouty, sleep =====
+
+**Zhrnutie**:
+  - User agents: rotácia troch hodnôt – `config.yaml` (`user_agent_rotation_size=3`)
+  - Časové limity: connect_timeout=4000 ms, read_timeout=15000 ms, total_timeout=25000 ms.
+  - Spánky: per-request 3–5 s, batch 10–20 s po 50 požiadavkách (človeku podobné pacing).
+
+**Odôvodnenie**:
+  - Vlastný UA s e-mailom spĺňa GitHub guidelines; rotácia znižuje riziko blokovania.
+  - Nízky request rate + sleeps minimalizujú záťaž; timeouts zabraňujú zrušeniu spojení.
+  - Robots.txt: `scope.robots` s TTL 24 h, compliance loguje `CrawlPolicy` (priebežné `robots_cache.jsonl`).
+
+
+Viac info pre timeouty a hlavičky je v [[user:andrej.vysny:2.Konzultácia]]
+
+
+
+
+
+
+
+===== Ukážka kódu – extrakcia URL z HTML =====
+
+<code>
+
+# crawler/extractor.py
+
+class LinkExtractor:
+    
+    def extract(self, html_content: str, base_url: str) -> List[str]:
+        if not html_content or not base_url:
+            return []
+        
+        try:
+            pattern = r"""<a\s+[^>]*?href\s*=\s*(?:["']([^"']+)["']|([^\s>]+))"""
+            seen = set()
+            results = []
+            
+            for match in re.finditer(pattern, html_content, re.IGNORECASE | re.DOTALL):
+                href = match.group(1) or match.group(2)
+                href = html.unescape(href).strip()
+                
+                if not href or href.startswith("#") or href.startswith("javascript:"):
+                    continue
+                if href.startswith("mailto:") or href.startswith("tel:"):
+                    continue
+                absolute_url = urljoin(base_url, href)
+                if not self._is_supported_scheme(absolute_url):
+                    continue
+
+                url_without_fragment = self._remove_fragment(absolute_url)
+                if url_without_fragment not in seen:
+                    seen.add(url_without_fragment)
+                    results.append(url_without_fragment)
+            
+            logger.debug(f"Extracted {len(results)} links from {base_url}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error extracting links from {base_url}: {e}")
+            return []
+</code>
+
+Kód: `crawler/extractor.py`
+
+
+
+
+
+
+
+===== Ukážka kódu – extrakcia entít =====
+
+
+
+<code>
+# extractor/entity_extractors.py
+
+
+def extract_urls(doc_id: str, html_content: str) -> List[EntityRow]:
+    """Extract URLs from HTML (hrefs, raw http(s) strings, markdown links)."""
+    results: List[EntityRow] = []
+    url_regexes = regexes.get_url_regexes()
+    seen = set()
+
+    # href attributes
+    for m in url_regexes['html'].finditer(html_content):
+        url = (m.group(1) or '').strip()
+        if not url:
+            continue
+        if url in seen:
+            continue
+        offsets = [{'start': m.start(1), 'end': m.end(1), 'source': 'html'}]
+        results.append((doc_id, 'URL', url, json.dumps(offsets, separators=(',', ':'))))
+        seen.add(url)
+
+    # explicit http(s) strings
+    for m in url_regexes['http'].finditer(html_content):
+        url = m.group(0).strip()
+        if not url or url in seen:
+            continue
+        offsets = [{'start': m.start(), 'end': m.end(), 'source': 'html'}]
+        results.append((doc_id, 'URL', url, json.dumps(offsets, separators=(',', ':'))))
+        seen.add(url)
+
+    # markdown-style links (text inside HTML can contain them)
+    for m in url_regexes['markdown'].finditer(html_content):
+        url = (m.group(2) or '').strip()
+        if not url or url in seen:
+            continue
+        offsets = [{'start': m.start(2), 'end': m.end(2), 'source': 'html'}]
+        results.append((doc_id, 'URL', url, json.dumps(offsets, separators=(',', ':'))))
+        seen.add(url)
+
+    return results
+</code>
+
+Kód: `extractor/entity_extractors.py`, `extractor/regexes.py`
+
+
+
+<code>
+
+# extractor/regexes.py
+
+_STAR_COUNTER_RE = re.compile(
+    r'<span\s+id="repo-stars-counter-star"[^>]*?title="([0-9,]+)"',
+    re.IGNORECASE | re.DOTALL
+)
+
+_TOPIC_TAG_RE = re.compile(
+    r'<a\s+[^>]*?(?:class="[^"]*?topic-tag[^"]*?"|data-octo-click="topic")[^>]*?>([\w\-]+)</a>',
+    re.IGNORECASE | re.DOTALL
+)
+</code>
+
+
+
+
+
+=====  Indexer a index =====
+
+
+**Popis TF váh**:
+
+- `indexer/ingest.py` vytvára `term_freq` (počty výskytov).
+- `indexer/search.py` používa `tf_weight = 1 + log(tf)` a rovnako pre dopyt (`1 + log(q_tf)`).
+
+==== Interval rebuildov: ====
+
+Po každom väčšom behu extraktora treba manuálne spustiť: 
+
+<code>
+python -m indexer.build --input workspace/store/text --output workspace/store/index/<index_name>
+</code>
+
+Parametre --input a --output môžu byť ignorované - v tomto prípade sa použíjú default hodnoty.
+
+RSJ aj log IDF sa ukladajú v **postings.jsonl**.
+
+==== Štruktúra uloženia: ====
+  - Priečinok: **workspace/store/index/default/**
+  - **docs.jsonl** – doc table (`doc_id`, `path`, `title`, `length`, voliteľné `tiktoken_token_count`).
+  - **postings.jsonl** – záznamy: `term`, `df`, `idf` (mapa metód), `postings` (zoznam `{doc_id, tf}`).
+  - **manifest.json** – `total_docs`, `total_terms`, `idf_method`, `idf_methods`.
+  - **terms.idx** – offset/length pre rýchly náhodný prístup k termom.
+  - **partial/** – dočasné čiastkové súbory počas streamovaného buildu.
+
+Build je streamovaný (chunk_size=1000), postupne zapisuje `docs.jsonl`/partials a následne zlúči postings do finálneho `postings.jsonl` + `terms.idx` (pozri `indexer/build.py`).
+
+==== CLI: ==== 
+
+<code>
+python -m indexer.build
+python -m indexer.query
+python -m indexer.compare
+</code>
+
+
+==== Manifest a počty: ====
+- `total_docs`: 28 353 (z `workspace/store/index/default/manifest.json`)
+- `total_terms`: 521 066 (z `manifest.json`)
+- `idf_methods`: `classic`, `smoothed`, `probabilistic`, `max` (uložené aj pri každom terme v `postings.jsonl`)
+- `docs.jsonl` obsahuje aj bonusové tokenové metriky (`tokenize_count`, `tiktoken_token_count`).
+
+==== Ukážky dopytov (classic): ====
+- Dopyt: `nodejs` (pozri `reports/query/query_nodejs_20251031T225103Z.md`)
+  - Top 1: „GitHub - awesome-selfhosted/awesome-selfhosted …“ (score 12.8349)
+  - Matched terms: `nodejs` = 210
+- Dopyt: `python web scraping` (pozri `reports/query/query_python_web_scraping_20251031T224801Z.md`)
+  - Top 1: „web-scraping-python · GitHub Topics“ (score 28.5143)
+  - Matched terms: `python`, `web`, `scraping`
+
+
+=== Poznámka: === 
+
+Tokenizácia (`indexer/tokenize.py`) používa regex `[A-Za-z0-9]+`, nižšia podpora pre ne-ASCII – ak bude potrebné, rozšírime v ďalšom milestone.
+
+
+
+
+
+===== Metódy IDF =====
+
+
+| Metóda | Vzorec | Poznámky |
+| classic | <code>log(N/df)</code> | prirodzený logaritmus |
+| smoothed | <code>log((N + 1)/(df + 1)) + 1</code> | vždy kladné |
+| probabilistic | <code>log(((N - df + 0.5)/(df + 0.5)) + 1)</code> | RSJ‑štýl so stabilizáciou 0.5 |
+| max | <code>log(N/df)/log(N)</code> | normalizované na [0,1] |
+
+
+
+
+===== Porovnanie IDF metód =====
+
+Porovnávanie rankingov medzi metódami je dostupné cez `indexer.compare` (pozri kód `indexer/compare.py`). Ukážkový príkaz:
+
+<code>
+python -m indexer.compare --index workspace/store/index/default --top 5 \
+  --output reports/idf_comparison.tsv
+</code>
+
+Per‑dopytové reporty sú v `reports/query/`.
+
+Poznámka: Súbor `reports/idf_comparison.tsv` zatiaľ nie je v reporte prítomný; porovnanie je reprodukovateľné vyššie uvedeným príkazom.
+
+
+
+
+===== Štatistiky =====
+
+| Metrika | Hodnota | Zdroj |
+| Počet HTML (celkom) | 28 647 | `docs/generated/crawl_stats.md` (Total documents) |
+| Úspešné HTML (2xx) | 28 353 | `docs/generated/crawl_stats.md` (Successful) |
+| Celková veľkosť HTML | 10.02 GB (10 753 802 579 bajtov) | `docs/generated/crawl_stats.md` |
+| Počet topics | 14 085 (49.17 %) | `docs/generated/crawl_stats.md` |
+| Počet repo root | 9 465 (33.04 %) | `docs/generated/crawl_stats.md` |
+| Počet issues | 5 066 (17.68 %) | `docs/generated/crawl_stats.md` |
+| urls_fetched / urls_enqueued | 28 351 / 573 308 | `workspace/state/service_stats.json` |
+| policy_denied | 2 934 093 | `workspace/state/service_stats.json` (silná filtrácia allowlistom/deny patterns) |
+| links_extracted | 6 674 353 | `workspace/state/service_stats.json` |
+| Relevantné dokumenty | 14 561 (~50.83 %, repo_root+issues+pull) | odvodené zo `docs/generated/crawl_stats.md` |
+
+===== Kontrola kritérií odovzdania =====
+
+- Cieľ projektu: uvedený v sekcii „Cieľ projektu“.
+- Odkazy + extrahované dáta: 7 ukážok v tabuľke (stars, forks, licencie, README/URL), s cestami na HTML/TSV.
+- Q&A: 5+ párov otázok a odpovedí (Jellyfin ekosystém, jazyky, klienti…).
+- Frameworky/knižnice: tabuľka „Použité technológie“.
+- Architektúra: popis pipeline + diagram; sekcia „Architektúra“. 
+- Metadáta: tabuľka s ukážkou z `workspace/metadata/crawl_metadata.jsonl`.
+- Hlavičky/timeouty/sleep: sekcia „Hlavičky, timeouty, sleep“ s odôvodnením.
+- Kód – extrakcia URL/entít: dve plné ukážky s odkazom na `crawler/extractor.py` a `extractor/*`.
+- Indexer a index (TF): sekcia „Indexer a index“ – TF váhy, rebuild interval, štruktúra, manifest, streaming build.
+- IDF metódy: sekcia „Metódy IDF“ uvádza implementované vzorce; hodnoty sú v `postings.jsonl`.
+- Porovnanie IDF: postup a príkaz na generovanie (`indexer.compare`); per‑dopytové reporty v `reports/query/` (aktuálne pre `classic`).
+- Štatistiky: tabuľka z `docs/generated/crawl_stats.md` a `workspace/state/service_stats.json`.
+- BONUS – tokeny: `docs.jsonl` obsahuje `tiktoken_token_count` (pozri „Manifest a počty“).

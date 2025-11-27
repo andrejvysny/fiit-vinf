@@ -9,6 +9,64 @@ import re
 from typing import Dict, List, Pattern
 
 # ============================================================================
+# HTML Cleaning Patterns
+# ============================================================================
+
+_HTML_CHROME_PATTERNS: List[Pattern] = [
+    # Skip to content link
+    re.compile(r'<a[^>]*?href="#[^"]*?skip[^"]*?"[^>]*?>.*?</a>', re.IGNORECASE | re.DOTALL),
+
+    # Global header and navigation
+    re.compile(r'<header[^>]*?class="[^"]*?(?:Header|AppHeader|header)[^"]*?"[^>]*?>.*?</header>', re.IGNORECASE | re.DOTALL),
+
+    # Navigation bars
+    re.compile(r'<nav[^>]*?(?:class="[^"]*?(?:UnderlineNav|navigation|nav-bar)[^"]*?"|role="navigation")[^>]*?>.*?</nav>', re.IGNORECASE | re.DOTALL),
+
+    # Sidebar elements
+    re.compile(r'<(?:div|aside)[^>]*?class="[^"]*?(?:sidebar|Sidebar)[^"]*?"[^>]*?>.*?</(?:div|aside)>', re.IGNORECASE | re.DOTALL),
+
+    # Footer
+    re.compile(r'<footer[^>]*?>.*?</footer>', re.IGNORECASE | re.DOTALL),
+
+    # Breadcrumbs
+    re.compile(r'<nav[^>]*?aria-label="[^"]*?[Bb]readcrumb[^"]*?"[^>]*?>.*?</nav>', re.IGNORECASE | re.DOTALL),
+
+    # Command palette and filters
+    re.compile(r'<div[^>]*?class="[^"]*?(?:command-bar|filter-bar|CommandBar)[^"]*?"[^>]*?>.*?</div>', re.IGNORECASE | re.DOTALL),
+
+    # Pagination
+    # More specific: match up to the next closing </div> without spanning unrelated tags
+    re.compile(r'<div[^>]*?class="[^"]*?pagination[^"]*?"[^>]*?>[\s\S]*?</div>', re.IGNORECASE),
+]
+
+_HTML_REMOVE_TAGS_RE = re.compile(
+    r'<(script|style|iframe|canvas|svg|noscript|template|form|dialog|input|button|select|textarea)[^>]*?>.*?</\1>',
+    re.IGNORECASE | re.DOTALL
+)
+
+_HTML_SELF_CLOSING_RE = re.compile(
+    r'<(?:meta|link|base|input|img|br|hr|area|embed|param|source|track|wbr)[^>]*?/?>',
+    re.IGNORECASE
+)
+
+_HTML_COMMENT_RE = re.compile(r'<!--.*?-->', re.DOTALL)
+_HTML_DOCTYPE_RE = re.compile(r'<!DOCTYPE[^>]*?>', re.IGNORECASE | re.DOTALL)
+
+_HTML_BLOCK_TAGS_RE = re.compile(
+    r'</?(?:p|div|section|article|main|h[1-6]|pre|blockquote|li|ul|ol|'
+    r'table|tr|thead|tbody|tfoot|th|td|dl|dt|dd|address|figcaption|figure|'
+    r'header|footer|aside|nav)[^>]*?>',
+    re.IGNORECASE
+)
+
+_HTML_BR_HR_RE = re.compile(r'<(?:br|hr)\s*/?>', re.IGNORECASE)
+_HTML_TAG_RE = re.compile(r'<[^>]+>')
+_HTML_MULTI_SPACE_RE = re.compile(r'[ \t\f\v]+')
+_HTML_AROUND_NEWLINE_RE = re.compile(r'[ \t\f\v]*\n[ \t\f\v]*')
+_HTML_MULTI_NEWLINE_RE = re.compile(r'\n{3,}')
+
+
+# ============================================================================
 # GitHub Metadata Patterns
 # ============================================================================
 
@@ -226,6 +284,61 @@ _CODE_FENCE_LANG_RE = re.compile(
 # ============================================================================
 # Pattern Accessor Functions
 # ============================================================================
+
+def get_html_chrome_patterns() -> List[Pattern]:
+    """Return compiled patterns targeting GitHub chrome sections."""
+    return _HTML_CHROME_PATTERNS
+
+
+def get_html_remove_tags_regex() -> Pattern:
+    """Return pattern for removing non-content HTML tags."""
+    return _HTML_REMOVE_TAGS_RE
+
+
+def get_html_self_closing_regex() -> Pattern:
+    """Return pattern for removing self-closing metadata tags."""
+    return _HTML_SELF_CLOSING_RE
+
+
+def get_html_comment_regex() -> Pattern:
+    """Return pattern for stripping HTML comments."""
+    return _HTML_COMMENT_RE
+
+
+def get_html_doctype_regex() -> Pattern:
+    """Return pattern for stripping DOCTYPE declarations."""
+    return _HTML_DOCTYPE_RE
+
+
+def get_html_block_tags_regex() -> Pattern:
+    """Return pattern mapping block-level tags to newlines."""
+    return _HTML_BLOCK_TAGS_RE
+
+
+def get_html_br_hr_regex() -> Pattern:
+    """Return pattern for replacing <br> and <hr> tags."""
+    return _HTML_BR_HR_RE
+
+
+def get_html_generic_tag_regex() -> Pattern:
+    """Return catch-all pattern for stripping remaining tags."""
+    return _HTML_TAG_RE
+
+
+def get_html_multi_space_regex() -> Pattern:
+    """Return pattern for collapsing multiple spaces."""
+    return _HTML_MULTI_SPACE_RE
+
+
+def get_html_around_newline_regex() -> Pattern:
+    """Return pattern for normalizing whitespace around newlines."""
+    return _HTML_AROUND_NEWLINE_RE
+
+
+def get_html_multi_newline_regex() -> Pattern:
+    """Return pattern for collapsing excessive blank lines."""
+    return _HTML_MULTI_NEWLINE_RE
+
 
 def get_star_regexes() -> List[Pattern]:
     """Return list of star count regex patterns (try in order)."""

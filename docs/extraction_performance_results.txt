@@ -1,0 +1,8 @@
+Sample Size | Method | Duration (s) | Files Processed
+-----------|--------|--------------|-----------------
+10 | Python | 1.03 | 0
+10 | Spark | 12.43 | 500
+100 | Python | 4.90 | 0
+100 | Spark | 14.65 | 500
+500 | Python | 22.92 | 0
+500 | Spark | 19.66 | 500

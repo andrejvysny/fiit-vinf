@@ -1,0 +1,393 @@
+# =============================================================================
+# VINF Pipeline: Spark + PyLucene (Unified Docker Compose)
+# =============================================================================
+#
+# Full pipeline for GitHub HTML extraction, Wikipedia processing, entity joining,
+# and PyLucene indexing with TF-IDF comparison.
+#
+# Optimized for TB-scale processing on single-host (MacBook M4 Pro / 16-32GB RAM):
+# - Kryo serialization for efficient data transfer
+# - Adaptive query execution for dynamic optimization
+# - Disk-based persistence to avoid OOM on large datasets
+# - Configurable memory settings via environment variables
+#
+# Usage:
+#   docker compose run --rm spark-extract      # HTML extraction (GitHub pages)
+#   docker compose run --rm spark-wiki         # Wikipedia dump extraction
+#   docker compose run --rm spark-join         # Entity-Wiki join
+#   docker compose run --rm lucene-build       # Build Lucene index
+#   docker compose run --rm lucene-search      # Run search queries
+#   docker compose run --rm lucene-compare     # Compare TF-IDF vs Lucene
+#   docker compose run --rm unified-search     # Unified search interface
+#
+# Memory tuning (for 16GB MacBook):
+#   SPARK_DRIVER_MEMORY=6g SPARK_EXECUTOR_MEMORY=4g docker compose run --rm spark-wiki
+#
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # SPARK SERVICES - HTML/Wiki Extraction & Join
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # HTML Extraction: Crawled GitHub pages → text + entities
+  # --------------------------------------------------------------------------
+  spark-extract:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-extract
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-6g}
+      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
+      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
+      - SPARK_LOCAL_DIRS=/tmp/spark
+      - PYTHONPATH=/opt/app
+      - PYSPARK_PYTHON=python3
+      - HOME=/tmp
+      - PARTITIONS=${PARTITIONS:-128}
+    volumes:
+      - ./workspace/store/html:/opt/app/workspace/store/html:ro
+      - ./workspace/store/spark:/opt/app/workspace/store/spark
+      - ./workspace/store/text:/opt/app/workspace/store/text
+      - ./workspace/store/entities:/opt/app/workspace/store/entities
+      - ./spark:/opt/app/spark:ro
+      - ./extractor:/opt/app/extractor:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+    command:
+      - bash
+      - -c
+      - |
+        pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+        /opt/spark/bin/spark-submit \
+          --master local[*] \
+          --driver-memory $${SPARK_DRIVER_MEMORY:-6g} \
+          --conf spark.driver.maxResultSize=$${SPARK_MAX_RESULT_SIZE:-2g} \
+          --conf spark.sql.adaptive.enabled=true \
+          --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+          --conf spark.sql.shuffle.partitions=$${PARTITIONS:-128} \
+          --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+          --conf spark.kryoserializer.buffer.max=512m \
+          --conf spark.memory.fraction=0.8 \
+          --conf spark.memory.storageFraction=0.3 \
+          --conf spark.local.dir=/tmp/spark \
+          /opt/app/spark/main.py --config /opt/app/config.yml --partitions $${PARTITIONS:-128} $${SPARK_ARGS:-}
+    user: "0:0"
+    networks:
+      - vinf-net
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY_LIMIT:-10g}
+
+  # --------------------------------------------------------------------------
+  # Wikipedia Extraction: Wiki XML dump → structured TSV + text files
+  # --------------------------------------------------------------------------
+  spark-wiki:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-wiki
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      # Wiki extraction needs more memory for large dumps
+      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-8g}
+      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
+      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
+      - SPARK_LOCAL_DIRS=/tmp/spark
+      - PYTHONPATH=/opt/app
+      - PYSPARK_PYTHON=python3
+      - HOME=/tmp
+      - PARTITIONS=${PARTITIONS:-256}
+    volumes:
+      - ./wiki_dump:/opt/app/wiki_dump:ro
+      - ./workspace/store/wiki:/opt/app/workspace/store/wiki
+      - ./spark:/opt/app/spark:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+    command:
+      - bash
+      - -c
+      - |
+        pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+        /opt/spark/bin/spark-submit \
+          --master local[*] \
+          --driver-memory $${SPARK_DRIVER_MEMORY:-8g} \
+          --executor-memory $${SPARK_EXECUTOR_MEMORY:-4g} \
+          --conf spark.driver.maxResultSize=$${SPARK_MAX_RESULT_SIZE:-2g} \
+          --conf spark.sql.adaptive.enabled=true \
+          --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+          --conf spark.sql.shuffle.partitions=$${PARTITIONS:-256} \
+          --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+          --conf spark.kryoserializer.buffer.max=512m \
+          --conf spark.memory.fraction=0.8 \
+          --conf spark.memory.storageFraction=0.3 \
+          --conf spark.memory.offHeap.enabled=true \
+          --conf spark.memory.offHeap.size=2g \
+          --conf spark.local.dir=/tmp/spark \
+          /opt/app/spark/jobs/wiki_extractor.py \
+            --wiki-in /opt/app/wiki_dump \
+            --out /opt/app/workspace/store/wiki \
+            --log /opt/app/logs/wiki_extract.jsonl \
+            --partitions $${PARTITIONS:-256} \
+            $${WIKI_ARGS:-}
+    user: "0:0"
+    networks:
+      - vinf-net
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY_LIMIT:-12g}
+
+  # --------------------------------------------------------------------------
+  # Entity-Wiki Join: Match extracted entities with Wikipedia pages
+  # --------------------------------------------------------------------------
+  spark-join:
+    image: apache/spark-py:latest
+    container_name: vinf-spark-join
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - SPARK_NO_DAEMONIZE=1
+      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-6g}
+      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-3g}
+      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
+      - SPARK_LOCAL_DIRS=/tmp/spark
+      - PYTHONPATH=/opt/app
+      - PYSPARK_PYTHON=python3
+      - HOME=/tmp
+      - PARTITIONS=${PARTITIONS:-64}
+    volumes:
+      - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
+      - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
+      - ./workspace/store/wiki:/opt/app/workspace/store/wiki:ro
+      - ./workspace/store/join:/opt/app/workspace/store/join
+      - ./spark:/opt/app/spark:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./requirements.txt:/opt/app/requirements.txt:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./logs:/opt/app/logs
+      - ./runs:/opt/app/runs
+      - spark_checkpoints:/tmp/spark_checkpoints
+    command:
+      - bash
+      - -c
+      - |
+        pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+        /opt/spark/bin/spark-submit \
+          --master local[*] \
+          --driver-memory $${SPARK_DRIVER_MEMORY:-6g} \
+          --conf spark.driver.maxResultSize=$${SPARK_MAX_RESULT_SIZE:-2g} \
+          --conf spark.sql.adaptive.enabled=true \
+          --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+          --conf spark.sql.shuffle.partitions=$${PARTITIONS:-64} \
+          --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+          --conf spark.kryoserializer.buffer.max=512m \
+          --conf spark.memory.fraction=0.8 \
+          --conf spark.memory.storageFraction=0.3 \
+          --conf spark.local.dir=/tmp/spark \
+          /opt/app/spark/jobs/join_html_wiki.py \
+            --entities /opt/app/workspace/store/spark/entities/entities.tsv \
+            --wiki /opt/app/workspace/store/wiki \
+            --out /opt/app/workspace/store/join \
+            --log /opt/app/logs/wiki_join.jsonl \
+            --partitions $${PARTITIONS:-64} \
+            $${JOIN_ARGS:-}
+    user: "0:0"
+    networks:
+      - vinf-net
+    deploy:
+      resources:
+        limits:
+          memory: ${CONTAINER_MEMORY_LIMIT:-10g}
+
+  # ==========================================================================
+  # PYLUCENE SERVICES - Indexing & Search
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # Base Lucene: Interactive PyLucene shell
+  # --------------------------------------------------------------------------
+  lucene:
+    image: coady/pylucene:9
+    container_name: vinf-lucene
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - PYTHONPATH=/opt/app
+      - HOME=/tmp
+    volumes:
+      - ./workspace/store/text:/opt/app/workspace/store/text:ro
+      - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
+      - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
+      - ./workspace/store/join:/opt/app/workspace/store/join:ro
+      - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index
+      - ./workspace/store/index:/opt/app/workspace/store/index:ro
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./queries.txt:/opt/app/queries.txt:ro
+      - ./reports:/opt/app/reports
+    command: ["python", "-c", "import lucene; lucene.initVM(); print('PyLucene ready:', lucene.VERSION)"]
+    user: "0:0"
+    networks:
+      - vinf-net
+
+  # --------------------------------------------------------------------------
+  # Lucene Build: Create index from text, entities, and wiki join
+  # --------------------------------------------------------------------------
+  lucene-build:
+    image: coady/pylucene:9
+    container_name: vinf-lucene-build
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - PYTHONPATH=/opt/app
+      - HOME=/tmp
+    volumes:
+      - ./workspace/store/text:/opt/app/workspace/store/text:ro
+      - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
+      - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
+      - ./workspace/store/join:/opt/app/workspace/store/join:ro
+      - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+    command:
+      - python
+      - -m
+      - lucene_indexer.build
+      - --text-dir
+      - /opt/app/workspace/store/text
+      - --entities
+      - /opt/app/workspace/store/spark/entities/entities.tsv
+      - --wiki-join
+      - /opt/app/workspace/store/join/html_wiki.tsv
+      - --output
+      - /opt/app/workspace/store/lucene_index
+    user: "0:0"
+    networks:
+      - vinf-net
+
+  # --------------------------------------------------------------------------
+  # Lucene Search: Query the Lucene index
+  # --------------------------------------------------------------------------
+  lucene-search:
+    image: coady/pylucene:9
+    container_name: vinf-lucene-search
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - PYTHONPATH=/opt/app
+      - HOME=/tmp
+      - QUERY=${QUERY:-python}
+      - QUERY_TYPE=${QUERY_TYPE:-simple}
+      - TOP=${TOP:-10}
+    volumes:
+      - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index:ro
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+    command:
+      - bash
+      - -c
+      - python -m lucene_indexer.search --index /opt/app/workspace/store/lucene_index --query "$${QUERY}" --type $${QUERY_TYPE} --top $${TOP}
+    user: "0:0"
+    networks:
+      - vinf-net
+
+  # --------------------------------------------------------------------------
+  # Lucene Compare: Compare TF-IDF index vs Lucene index
+  # --------------------------------------------------------------------------
+  lucene-compare:
+    image: coady/pylucene:9
+    container_name: vinf-lucene-compare
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - PYTHONPATH=/opt/app
+      - HOME=/tmp
+    volumes:
+      - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index:ro
+      - ./workspace/store/index:/opt/app/workspace/store/index:ro
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./queries.txt:/opt/app/queries.txt:ro
+      - ./reports:/opt/app/reports
+    command:
+      - python
+      - -m
+      - lucene_indexer.compare
+      - --queries-file
+      - /opt/app/queries.txt
+      - --tfidf-index
+      - /opt/app/workspace/store/index
+      - --lucene-index
+      - /opt/app/workspace/store/lucene_index
+      - --output
+      - /opt/app/reports/index_comparison.md
+    user: "0:0"
+    networks:
+      - vinf-net
+
+  # --------------------------------------------------------------------------
+  # Unified Search: Search using either TF-IDF or Lucene engine
+  # --------------------------------------------------------------------------
+  unified-search:
+    image: coady/pylucene:9
+    container_name: vinf-unified-search
+    platform: linux/amd64
+    working_dir: /opt/app
+    environment:
+      - PYTHONPATH=/opt/app
+      - HOME=/tmp
+      - QUERY=${QUERY:-python web}
+      - ENGINE=${ENGINE:-lucene}
+      - QUERY_TYPE=${QUERY_TYPE:-simple}
+      - TOP=${TOP:-10}
+    volumes:
+      - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index:ro
+      - ./workspace/store/index:/opt/app/workspace/store/index:ro
+      - ./lucene_indexer:/opt/app/lucene_indexer:ro
+      - ./indexer:/opt/app/indexer:ro
+      - ./config.yml:/opt/app/config.yml:ro
+      - ./config_loader.py:/opt/app/config_loader.py:ro
+    command:
+      - bash
+      - -c
+      - python -m lucene_indexer.unified_search --config /opt/app/config.yml --query "$${QUERY}" --engine $${ENGINE} --type $${QUERY_TYPE} --top $${TOP}
+    user: "0:0"
+    networks:
+      - vinf-net
+
+# =============================================================================
+# NETWORKS
+# =============================================================================
+networks:
+  vinf-net:
+    driver: bridge
+
+# =============================================================================
+# VOLUMES
+# =============================================================================
+volumes:
+  # Checkpoint directory for Spark disk-based persistence
+  # Enables fault tolerance and reduces memory pressure on large datasets
+  spark_checkpoints:
+    driver: local

@@ -1,0 +1,985 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# VINF Pipeline CLI
+# =============================================================================
+# Unified command-line interface for the VINF data processing pipeline.
+#
+# Subcommands:
+#   extract       - Extract text and entities from crawled GitHub HTML
+#   wiki          - Extract structured data from Wikipedia dump
+#   join          - Join extracted entities with Wikipedia data
+#   join-topics   - Streaming join for topics with relevance filtering
+#   lucene-build  - Build PyLucene index
+#   lucene-search - Search the Lucene index
+#   lucene-compare- Compare TF-IDF vs Lucene results
+#   pipeline      - Run full pipeline (extract → wiki → join → lucene-build)
+#
+# Usage:
+#   bin/cli <subcommand> [options]
+#   bin/cli --help
+#
+# =============================================================================
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.yml"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# =============================================================================
+# Helper Functions
+# =============================================================================
+
+print_header() {
+    echo -e "${BLUE}========================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}========================================${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}✓ $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}⚠ $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}✗ $1${NC}" >&2
+}
+
+check_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        print_error "Docker is required. Please install Docker."
+        exit 1
+    fi
+}
+
+show_main_help() {
+    cat <<EOF
+VINF Pipeline CLI - Unified command-line interface
+
+Usage: bin/cli <subcommand> [options]
+
+Subcommands:
+  extract        Extract text and entities from crawled GitHub HTML
+  wiki           Extract structured data from Wikipedia dump
+  join           Join extracted entities with Wikipedia data
+  join-topics    Streaming join for topics with relevance filtering
+  lucene-build   Build PyLucene index from extracted data
+  lucene-search  Search the Lucene index
+  lucene-compare Compare TF-IDF vs Lucene search results
+  pipeline       Run full pipeline automatically
+
+Global Options:
+  -h, --help     Show help for main CLI or subcommand
+  --version      Show version information
+
+Examples:
+  bin/cli extract --sample 100                    # Test extraction with 100 files
+  bin/cli wiki --wiki-max-pages 1000              # Test wiki with 1000 pages
+  bin/cli join                                    # Run entity-wiki join
+  bin/cli lucene-build                            # Build Lucene index
+  bin/cli lucene-search --query "python web"      # Search index
+  bin/cli pipeline                                # Run full pipeline
+
+Environment Variables:
+  SPARK_DRIVER_MEMORY     Spark driver memory (default: 6g)
+  SPARK_EXECUTOR_MEMORY   Spark executor memory (default: 4g)
+  SPARK_MAX_RESULT_SIZE   Max result size (default: 2g)
+  PARTITIONS              Number of partitions (default: varies by command)
+
+For subcommand help: bin/cli <subcommand> --help
+EOF
+}
+
+# =============================================================================
+# Subcommand: extract
+# =============================================================================
+
+cmd_extract() {
+    check_docker
+
+    # Defaults
+    local SPARK_ARGS=""
+    local SAMPLE=""
+    local PARTITIONS="${PARTITIONS:-128}"
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --sample|-s)
+                SAMPLE="$2"
+                SPARK_ARGS="$SPARK_ARGS --sample $2"
+                shift 2
+                ;;
+            --partitions|-p)
+                PARTITIONS="$2"
+                shift 2
+                ;;
+            --force|-f)
+                SPARK_ARGS="$SPARK_ARGS --force"
+                shift
+                ;;
+            --dry-run)
+                SPARK_ARGS="$SPARK_ARGS --dry-run"
+                shift
+                ;;
+            --local)
+                print_warning "Running local Python extractor (no Docker)"
+                cd "${PROJECT_ROOT}"
+                exec python -m extractor "$@"
+                ;;
+            *)
+                SPARK_ARGS="$SPARK_ARGS $1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Extract text and entities from crawled GitHub HTML pages.
+
+Usage: bin/cli extract [options]
+
+Options:
+  -s, --sample N      Process only first N files (for testing)
+  -p, --partitions N  Number of Spark partitions (default: 128)
+  -f, --force         Overwrite existing outputs
+  --dry-run           List files without processing
+  --local             Use local Python extractor (no Docker)
+  -h, --help          Show this help
+
+Examples:
+  bin/cli extract                        # Full extraction
+  bin/cli extract --sample 100           # Test with 100 files
+  bin/cli extract --force --sample 500   # Force re-extraction of 500 files
+EOF
+        return 0
+    fi
+
+    # Set memory based on data size
+    if [[ -n "${SAMPLE}" ]] && [[ "${SAMPLE}" -le 500 ]]; then
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-2g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-1g}"
+        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-1g}"
+    elif [[ -n "${SAMPLE}" ]] && [[ "${SAMPLE}" -le 5000 ]]; then
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
+    else
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-6g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
+    fi
+
+    print_header "Spark HTML Extraction"
+    echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+    echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+    echo "Partitions: ${PARTITIONS}"
+    [[ -n "${SAMPLE}" ]] && echo "Sample Size: ${SAMPLE}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+        -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+        -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
+        -e PARTITIONS="${PARTITIONS}" \
+        -e SPARK_ARGS="${SPARK_ARGS}" \
+        spark-extract
+
+    print_success "HTML extraction completed"
+}
+
+# =============================================================================
+# Subcommand: wiki
+# =============================================================================
+
+cmd_wiki() {
+    check_docker
+
+    # Defaults
+    local WIKI_ARGS=""
+    local WIKI_MAX_PAGES=""
+    local PARTITIONS="${PARTITIONS:-256}"
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --wiki-max-pages|-m)
+                WIKI_MAX_PAGES="$2"
+                WIKI_ARGS="$WIKI_ARGS --wiki-max-pages $2"
+                shift 2
+                ;;
+            --partitions|-p)
+                PARTITIONS="$2"
+                shift 2
+                ;;
+            --no-text)
+                WIKI_ARGS="$WIKI_ARGS --no-text"
+                shift
+                ;;
+            --dry-run)
+                WIKI_ARGS="$WIKI_ARGS --dry-run"
+                shift
+                ;;
+            *)
+                WIKI_ARGS="$WIKI_ARGS $1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Extract structured data from Wikipedia XML dump.
+
+Usage: bin/cli wiki [options]
+
+Options:
+  -m, --wiki-max-pages N  Limit pages to process (for testing)
+  -p, --partitions N      Number of Spark partitions (default: 256)
+  --no-text               Skip full text extraction
+  --dry-run               List files without processing
+  -h, --help              Show this help
+
+Outputs:
+  workspace/store/wiki/pages.tsv       Page metadata
+  workspace/store/wiki/categories.tsv  Page categories
+  workspace/store/wiki/links.tsv       Internal links
+  workspace/store/wiki/infobox.tsv     Infobox data
+  workspace/store/wiki/abstract.tsv    Article abstracts
+  workspace/store/wiki/aliases.tsv     Redirect aliases
+  workspace/store/wiki/text/           Full article text files
+
+Examples:
+  bin/cli wiki --wiki-max-pages 100    # Test with 100 pages
+  bin/cli wiki --partitions 512        # Full extraction with more partitions
+EOF
+        return 0
+    fi
+
+    # Set memory based on mode
+    if [[ -n "${WIKI_MAX_PAGES}" ]] && [[ "${WIKI_MAX_PAGES}" -le 1000 ]]; then
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+    else
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-8g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+    fi
+    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
+
+    print_header "Spark Wikipedia Extraction"
+    echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+    echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+    echo "Partitions: ${PARTITIONS}"
+    [[ -n "${WIKI_MAX_PAGES}" ]] && echo "Max Pages: ${WIKI_MAX_PAGES}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+        -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+        -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
+        -e PARTITIONS="${PARTITIONS}" \
+        -e WIKI_ARGS="${WIKI_ARGS}" \
+        spark-wiki
+
+    print_success "Wikipedia extraction completed"
+}
+
+# =============================================================================
+# Subcommand: join
+# =============================================================================
+
+cmd_join() {
+    check_docker
+
+    # Defaults
+    local JOIN_ARGS=""
+    local ENTITIES_MAX_ROWS=""
+    local PARTITIONS="${PARTITIONS:-64}"
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --entities-max-rows|-m)
+                ENTITIES_MAX_ROWS="$2"
+                JOIN_ARGS="$JOIN_ARGS --entities-max-rows $2"
+                shift 2
+                ;;
+            --partitions|-p)
+                PARTITIONS="$2"
+                shift 2
+                ;;
+            --dry-run)
+                JOIN_ARGS="$JOIN_ARGS --dry-run"
+                shift
+                ;;
+            *)
+                JOIN_ARGS="$JOIN_ARGS $1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Join extracted entities with Wikipedia data.
+
+Usage: bin/cli join [options]
+
+Options:
+  -m, --entities-max-rows N  Limit entity rows (for testing)
+  -p, --partitions N         Number of Spark partitions (default: 64)
+  --dry-run                  Show what would be joined
+  -h, --help                 Show this help
+
+Inputs:
+  workspace/store/spark/entities/entities.tsv
+  workspace/store/wiki/*.tsv
+
+Outputs:
+  workspace/store/join/html_wiki.tsv
+
+Examples:
+  bin/cli join                           # Full join
+  bin/cli join --entities-max-rows 1000  # Test with 1000 entities
+EOF
+        return 0
+    fi
+
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-6g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-3g}"
+    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
+
+    print_header "Spark Entity-Wiki Join"
+    echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+    echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+    echo "Partitions: ${PARTITIONS}"
+    [[ -n "${ENTITIES_MAX_ROWS}" ]] && echo "Max Entity Rows: ${ENTITIES_MAX_ROWS}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
+        -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
+        -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
+        -e PARTITIONS="${PARTITIONS}" \
+        -e JOIN_ARGS="${JOIN_ARGS}" \
+        spark-join
+
+    print_success "Entity-Wiki join completed"
+}
+
+# =============================================================================
+# Subcommand: join-topics
+# =============================================================================
+
+cmd_join_topics() {
+    # This runs locally (requires local Spark installation)
+
+    # Defaults
+    local ENTITIES_PATH="${ENTITIES_PATH:-workspace/store/spark/entities/entities.tsv}"
+    local WIKI_DIR="${WIKI_DIR:-workspace/store/wiki}"
+    local OUT_DIR="${OUT_DIR:-workspace/store/wiki/join}"
+    local CHECKPOINT_DIR="${CHECKPOINT_DIR:-workspace/store/wiki/join/_chkpt/topics}"
+    local MAX_FILES_PER_TRIGGER="${MAX_FILES_PER_TRIGGER:-16}"
+    local RELEVANT_CATEGORIES="${RELEVANT_CATEGORIES:-programming,software,computer,library,framework,license}"
+    local ABS_HIT="${ABS_HIT:-true}"
+    local SHOW_HELP=false
+    local DO_CLEAN=false
+
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
+    export SPARK_SHUFFLE_PARTITIONS="${SPARK_SHUFFLE_PARTITIONS:-128}"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --entities)
+                ENTITIES_PATH="$2"
+                shift 2
+                ;;
+            --wiki)
+                WIKI_DIR="$2"
+                shift 2
+                ;;
+            --out)
+                OUT_DIR="$2"
+                shift 2
+                ;;
+            --checkpoint)
+                CHECKPOINT_DIR="$2"
+                shift 2
+                ;;
+            --maxFilesPerTrigger)
+                MAX_FILES_PER_TRIGGER="$2"
+                shift 2
+                ;;
+            --relevantCategories)
+                RELEVANT_CATEGORIES="$2"
+                shift 2
+                ;;
+            --absHit)
+                ABS_HIT="$2"
+                shift 2
+                ;;
+            --clean)
+                DO_CLEAN=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Streaming join for GitHub topics with Wikipedia relevance filtering.
+
+Usage: bin/cli join-topics [options]
+
+Options:
+  --entities PATH           Path to entities TSV
+  --wiki DIR                Wiki dimensions directory
+  --out DIR                 Output directory
+  --checkpoint DIR          Checkpoint directory
+  --maxFilesPerTrigger N    Max files per trigger (default: 16)
+  --relevantCategories KW   Comma-separated keywords
+  --absHit BOOL             Enable abstract matching (default: true)
+  --clean                   Clean checkpoint and output directories
+  -h, --help                Show this help
+
+Note: Requires local Spark installation (Java 11 or 17, not 24)
+
+Examples:
+  bin/cli join-topics                           # Run streaming join
+  bin/cli join-topics --maxFilesPerTrigger 8    # Lower memory usage
+  bin/cli join-topics --clean                   # Reset and clean
+EOF
+        return 0
+    fi
+
+    if [[ "$DO_CLEAN" == "true" ]]; then
+        print_warning "Cleaning checkpoint and output directories..."
+        rm -rf "${OUT_DIR}"
+        rm -rf "${CHECKPOINT_DIR}"
+        print_success "Cleaned: ${OUT_DIR}, ${CHECKPOINT_DIR}"
+        return 0
+    fi
+
+    # Check for local Spark
+    if ! command -v spark-submit >/dev/null 2>&1; then
+        print_error "Local Spark installation required for streaming join."
+        print_error "Install Spark and ensure spark-submit is in PATH."
+        exit 1
+    fi
+
+    print_header "Spark Streaming Topics Join"
+    echo "Entities: ${ENTITIES_PATH}"
+    echo "Wiki Dir: ${WIKI_DIR}"
+    echo "Output: ${OUT_DIR}"
+    echo "Checkpoint: ${CHECKPOINT_DIR}"
+    echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
+    echo "Max Files/Trigger: ${MAX_FILES_PER_TRIGGER}"
+    echo ""
+
+    # Create directories
+    mkdir -p "${OUT_DIR}"
+    mkdir -p "$(dirname "${CHECKPOINT_DIR}")"
+
+    cd "${PROJECT_ROOT}"
+
+    # Add Java 17+ compatibility flags
+    export SPARK_SUBMIT_OPTS="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED -Djdk.security.allowNonCaSignedJars=true"
+
+    exec spark-submit \
+        --master local[*] \
+        --driver-memory "${SPARK_DRIVER_MEMORY}" \
+        --executor-memory "${SPARK_EXECUTOR_MEMORY}" \
+        --conf spark.driver.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED" \
+        --conf spark.executor.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
+        --conf spark.sql.session.timeZone=UTC \
+        --conf spark.sql.shuffle.partitions="${SPARK_SHUFFLE_PARTITIONS}" \
+        --conf spark.driver.maxResultSize=2g \
+        --conf spark.sql.streaming.schemaInference=true \
+        --conf spark.sql.adaptive.enabled=true \
+        spark/jobs/join_html_wiki_topics.py \
+        --entities "${ENTITIES_PATH}" \
+        --wiki "${WIKI_DIR}" \
+        --out "${OUT_DIR}" \
+        --checkpoint "${CHECKPOINT_DIR}" \
+        --maxFilesPerTrigger "${MAX_FILES_PER_TRIGGER}" \
+        --relevantCategories "${RELEVANT_CATEGORIES}" \
+        --absHit "${ABS_HIT}"
+}
+
+# =============================================================================
+# Subcommand: lucene-build
+# =============================================================================
+
+cmd_lucene_build() {
+    check_docker
+
+    # Defaults
+    local BUILD_ARGS=""
+    local LIMIT=""
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --limit|-l)
+                LIMIT="$2"
+                BUILD_ARGS="$BUILD_ARGS --limit $2"
+                shift 2
+                ;;
+            --dry-run)
+                BUILD_ARGS="$BUILD_ARGS --dry-run"
+                shift
+                ;;
+            *)
+                BUILD_ARGS="$BUILD_ARGS $1"
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Build PyLucene index from extracted data.
+
+Usage: bin/cli lucene-build [options]
+
+Options:
+  -l, --limit N     Limit documents to index (for testing)
+  --dry-run         Show what would be indexed
+  -h, --help        Show this help
+
+Inputs:
+  workspace/store/text/                  Text files
+  workspace/store/spark/entities/        Entity data
+  workspace/store/join/html_wiki.tsv     Wiki join data
+
+Output:
+  workspace/store/lucene_index/          Lucene index
+
+Examples:
+  bin/cli lucene-build                   # Build full index
+  bin/cli lucene-build --limit 1000      # Build with 1000 docs
+EOF
+        return 0
+    fi
+
+    print_header "PyLucene Index Build"
+    echo "Text Dir: workspace/store/text"
+    echo "Entities: workspace/store/spark/entities/entities.tsv"
+    echo "Wiki Join: workspace/store/join/html_wiki.tsv"
+    echo "Output: workspace/store/lucene_index"
+    [[ -n "${LIMIT}" ]] && echo "Limit: ${LIMIT}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm lucene-build
+
+    print_success "Lucene index build completed"
+}
+
+# =============================================================================
+# Subcommand: lucene-search
+# =============================================================================
+
+cmd_lucene_search() {
+    check_docker
+
+    # Defaults
+    local QUERY=""
+    local QUERY_TYPE="simple"
+    local TOP=10
+    local SEARCH_ARGS=""
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --query|-q)
+                QUERY="$2"
+                shift 2
+                ;;
+            --type|-t)
+                QUERY_TYPE="$2"
+                shift 2
+                ;;
+            --top|-n)
+                TOP="$2"
+                shift 2
+                ;;
+            --field)
+                SEARCH_ARGS="$SEARCH_ARGS --field $2"
+                shift 2
+                ;;
+            --min-value)
+                SEARCH_ARGS="$SEARCH_ARGS --min-value $2"
+                shift 2
+                ;;
+            --max-value)
+                SEARCH_ARGS="$SEARCH_ARGS --max-value $2"
+                shift 2
+                ;;
+            --slop)
+                SEARCH_ARGS="$SEARCH_ARGS --slop $2"
+                shift 2
+                ;;
+            --max-edits)
+                SEARCH_ARGS="$SEARCH_ARGS --max-edits $2"
+                shift 2
+                ;;
+            --json)
+                SEARCH_ARGS="$SEARCH_ARGS --json"
+                shift
+                ;;
+            *)
+                # Treat as query if no query yet
+                if [[ -z "${QUERY}" ]]; then
+                    QUERY="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Search the PyLucene index.
+
+Usage: bin/cli lucene-search [options] [query]
+
+Options:
+  -q, --query TEXT    Search query (required)
+  -t, --type TYPE     Query type: simple, boolean, range, phrase, fuzzy
+  -n, --top N         Number of results (default: 10)
+  --field FIELD       Field for range queries
+  --min-value N       Min value for range queries
+  --max-value N       Max value for range queries
+  --slop N            Slop for phrase queries
+  --max-edits N       Max edits for fuzzy queries
+  --json              Output as JSON
+  -h, --help          Show this help
+
+Query Types:
+  simple   - Standard keyword search
+  boolean  - Boolean operators (AND, OR, NOT)
+  phrase   - Exact phrase matching
+  fuzzy    - Fuzzy matching for typos
+  range    - Numeric range queries
+
+Examples:
+  bin/cli lucene-search "python web"
+  bin/cli lucene-search --query "python AND docker" --type boolean
+  bin/cli lucene-search --query "machine learning" --type phrase
+  bin/cli lucene-search --query "pyhton" --type fuzzy
+  bin/cli lucene-search --type range --field star_count --min-value 1000
+EOF
+        return 0
+    fi
+
+    if [[ -z "${QUERY}" && "${QUERY_TYPE}" != "range" ]]; then
+        print_error "Query is required. Use --query \"search terms\" or --help for usage."
+        exit 1
+    fi
+
+    print_header "PyLucene Search"
+    echo "Query: ${QUERY:-<range query>}"
+    echo "Type: ${QUERY_TYPE}"
+    echo "Top: ${TOP}"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm \
+        -e QUERY="${QUERY}" \
+        -e QUERY_TYPE="${QUERY_TYPE}" \
+        -e TOP="${TOP}" \
+        lucene-search
+}
+
+# =============================================================================
+# Subcommand: lucene-compare
+# =============================================================================
+
+cmd_lucene_compare() {
+    check_docker
+
+    local SHOW_HELP=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Compare TF-IDF index vs Lucene index search results.
+
+Usage: bin/cli lucene-compare [options]
+
+Options:
+  -h, --help    Show this help
+
+Inputs:
+  queries.txt                        Test queries
+  workspace/store/index/             TF-IDF index
+  workspace/store/lucene_index/      Lucene index
+
+Output:
+  reports/index_comparison.md        Comparison report
+
+Examples:
+  bin/cli lucene-compare             # Run comparison
+EOF
+        return 0
+    fi
+
+    print_header "Index Comparison: TF-IDF vs Lucene"
+    echo "Queries: queries.txt"
+    echo "TF-IDF: workspace/store/index"
+    echo "Lucene: workspace/store/lucene_index"
+    echo "Output: reports/index_comparison.md"
+    echo ""
+
+    cd "${PROJECT_ROOT}"
+    docker compose -f "${COMPOSE_FILE}" run --rm lucene-compare
+
+    print_success "Comparison completed"
+}
+
+# =============================================================================
+# Subcommand: pipeline
+# =============================================================================
+
+cmd_pipeline() {
+    local SHOW_HELP=false
+    local SKIP_EXTRACT=false
+    local SKIP_WIKI=false
+    local SKIP_JOIN=false
+    local SKIP_LUCENE=false
+    local SAMPLE=""
+    local WIKI_MAX_PAGES=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --skip-extract)
+                SKIP_EXTRACT=true
+                shift
+                ;;
+            --skip-wiki)
+                SKIP_WIKI=true
+                shift
+                ;;
+            --skip-join)
+                SKIP_JOIN=true
+                shift
+                ;;
+            --skip-lucene)
+                SKIP_LUCENE=true
+                shift
+                ;;
+            --sample|-s)
+                SAMPLE="$2"
+                shift 2
+                ;;
+            --wiki-max-pages|-m)
+                WIKI_MAX_PAGES="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Run the full VINF pipeline.
+
+Usage: bin/cli pipeline [options]
+
+Options:
+  -s, --sample N          Sample size for extraction
+  -m, --wiki-max-pages N  Limit wiki pages
+  --skip-extract          Skip HTML extraction
+  --skip-wiki             Skip Wikipedia extraction
+  --skip-join             Skip entity-wiki join
+  --skip-lucene           Skip Lucene index build
+  -h, --help              Show this help
+
+Pipeline Steps:
+  1. extract      - HTML extraction from GitHub pages
+  2. wiki         - Wikipedia dump extraction
+  3. join         - Entity-Wiki join
+  4. lucene-build - Build PyLucene index
+
+Examples:
+  bin/cli pipeline                               # Full pipeline
+  bin/cli pipeline --sample 100 --wiki-max-pages 1000  # Test run
+  bin/cli pipeline --skip-extract --skip-wiki    # Only join and index
+EOF
+        return 0
+    fi
+
+    print_header "VINF Full Pipeline"
+    echo "Steps: extract → wiki → join → lucene-build"
+    echo ""
+
+    # Step 1: Extract
+    if [[ "$SKIP_EXTRACT" == "false" ]]; then
+        echo ""
+        print_header "Step 1/4: HTML Extraction"
+        if [[ -n "${SAMPLE}" ]]; then
+            cmd_extract --sample "${SAMPLE}"
+        else
+            cmd_extract
+        fi
+    else
+        print_warning "Skipping HTML extraction"
+    fi
+
+    # Step 2: Wiki
+    if [[ "$SKIP_WIKI" == "false" ]]; then
+        echo ""
+        print_header "Step 2/4: Wikipedia Extraction"
+        if [[ -n "${WIKI_MAX_PAGES}" ]]; then
+            cmd_wiki --wiki-max-pages "${WIKI_MAX_PAGES}"
+        else
+            cmd_wiki
+        fi
+    else
+        print_warning "Skipping Wikipedia extraction"
+    fi
+
+    # Step 3: Join
+    if [[ "$SKIP_JOIN" == "false" ]]; then
+        echo ""
+        print_header "Step 3/4: Entity-Wiki Join"
+        cmd_join
+    else
+        print_warning "Skipping entity-wiki join"
+    fi
+
+    # Step 4: Lucene
+    if [[ "$SKIP_LUCENE" == "false" ]]; then
+        echo ""
+        print_header "Step 4/4: Lucene Index Build"
+        cmd_lucene_build
+    else
+        print_warning "Skipping Lucene index build"
+    fi
+
+    echo ""
+    print_success "Pipeline completed successfully!"
+}
+
+# =============================================================================
+# Main Entry Point
+# =============================================================================
+
+main() {
+    if [[ $# -eq 0 ]]; then
+        show_main_help
+        exit 0
+    fi
+
+    local SUBCOMMAND="$1"
+    shift
+
+    case "${SUBCOMMAND}" in
+        extract)
+            cmd_extract "$@"
+            ;;
+        wiki)
+            cmd_wiki "$@"
+            ;;
+        join)
+            cmd_join "$@"
+            ;;
+        join-topics)
+            cmd_join_topics "$@"
+            ;;
+        lucene-build)
+            cmd_lucene_build "$@"
+            ;;
+        lucene-search)
+            cmd_lucene_search "$@"
+            ;;
+        lucene-compare)
+            cmd_lucene_compare "$@"
+            ;;
+        pipeline)
+            cmd_pipeline "$@"
+            ;;
+        -h|--help)
+            show_main_help
+            ;;
+        --version)
+            echo "VINF CLI v1.0.0"
+            ;;
+        *)
+            print_error "Unknown subcommand: ${SUBCOMMAND}"
+            echo ""
+            show_main_help
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

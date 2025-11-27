@@ -1,0 +1,673 @@
+#!/usr/bin/env python3
+"""
+Spark job for extracting structured data from Wikipedia XML dumps.
+
+Uses DataFrame API with mapInPandas for efficient parallel processing.
+
+Processes Wikipedia dump files (XML or XML.bz2) to extract:
+- Pages metadata
+- Categories
+- Internal links
+- Infoboxes
+- Abstracts
+- Redirect aliases
+
+All outputs are written as TSV files for downstream processing.
+
+Reference: https://www.mediawiki.org/wiki/Help:Export#Export_format
+"""
+
+import argparse
+import json
+import logging
+import os
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from typing import Iterator, List, Optional, Tuple
+
+import pandas as pd
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    StructType, StructField, StringType, IntegerType, LongType,
+    ArrayType, MapType
+)
+
+# Add project root to path
+sys.path.insert(0, '/opt/app')
+
+from spark.lib.wiki_regexes import (
+    extract_page_xml,
+    normalize_title,
+    extract_categories,
+    extract_internal_links,
+    extract_infobox_fields,
+    extract_abstract,
+    clean_wikitext_to_plaintext,
+)
+from spark.lib.io import write_tsv, write_ndjson
+from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Extract structured data from Wikipedia dumps (DataFrame API)"
+    )
+    parser.add_argument(
+        '--wiki-in',
+        required=True,
+        help='Input directory with Wikipedia dump files'
+    )
+    parser.add_argument(
+        '--out',
+        default='workspace/store/wiki',
+        help='Output directory for extracted TSV files'
+    )
+    parser.add_argument(
+        '--wiki-max-pages',
+        type=int,
+        help='Maximum number of pages to process (for development)'
+    )
+    parser.add_argument(
+        '--partitions',
+        type=int,
+        default=64,
+        help='Number of Spark partitions'
+    )
+    parser.add_argument(
+        '--log',
+        default='logs/wiki_extract.jsonl',
+        help='Log file path'
+    )
+    parser.add_argument(
+        '--dry-run',
+        action='store_true',
+        help='List files without processing'
+    )
+    parser.add_argument(
+        '--prefer-uncompressed',
+        action='store_true',
+        default=True,
+        help='Prefer uncompressed XML over bz2 for better partitioning'
+    )
+    parser.add_argument(
+        '--extract-text',
+        action='store_true',
+        default=True,
+        help='Extract full article text to separate files (default: True)'
+    )
+    parser.add_argument(
+        '--no-text',
+        action='store_true',
+        help='Disable full text extraction'
+    )
+    return parser.parse_args()
+
+
+def find_wiki_dumps(input_dir: Path, prefer_uncompressed: bool = True) -> List[Path]:
+    """Find Wikipedia dump files (XML or XML.bz2)."""
+    dump_files = []
+
+    xml_files = list(input_dir.glob('*.xml'))
+    bz2_files = list(input_dir.glob('*.xml.bz2'))
+
+    if prefer_uncompressed and xml_files:
+        dump_files = xml_files
+    elif bz2_files:
+        dump_files = bz2_files
+    else:
+        dump_files = xml_files + bz2_files
+
+    dump_files.sort(key=lambda f: f.stat().st_size)
+
+    return dump_files
+
+
+def extract_pages_from_lines_pandas(
+    iterator: Iterator[pd.DataFrame],
+    max_pages_per_partition: Optional[int] = None
+) -> Iterator[pd.DataFrame]:
+    """
+    Extract <page> blocks from XML lines using pandas - runs via mapInPandas.
+
+    Args:
+        iterator: Iterator of pandas DataFrames with 'value' column (lines)
+        max_pages_per_partition: Optional limit per partition
+
+    Yields:
+        pandas DataFrame with 'page_xml' column
+    """
+    buffer = []
+    in_page = False
+    page_count = 0
+    max_buffer_lines = 50000
+    pages_batch = []
+    batch_size = 100  # Yield in batches for efficiency
+
+    for pdf in iterator:
+        for line in pdf['value']:
+            if '<page>' in line:
+                in_page = True
+                buffer = [line]
+            elif in_page:
+                buffer.append(line)
+
+                if len(buffer) > max_buffer_lines:
+                    buffer = []
+                    in_page = False
+                    continue
+
+                if '</page>' in line:
+                    page_xml = '\n'.join(buffer)
+                    pages_batch.append(page_xml)
+                    buffer = []
+                    in_page = False
+                    page_count += 1
+
+                    # Yield batch
+                    if len(pages_batch) >= batch_size:
+                        yield pd.DataFrame({'page_xml': pages_batch})
+                        pages_batch = []
+
+                    if max_pages_per_partition and page_count >= max_pages_per_partition:
+                        break
+
+        if max_pages_per_partition and page_count >= max_pages_per_partition:
+            break
+
+    # Yield remaining pages
+    if pages_batch:
+        yield pd.DataFrame({'page_xml': pages_batch})
+
+
+def read_dump_as_dataframe(
+    spark: SparkSession,
+    dump_path: Path,
+    max_pages: Optional[int] = None,
+    partitions: int = 64
+) -> DataFrame:
+    """
+    Read Wikipedia dump file using DataFrame API.
+
+    Uses spark.read.text() instead of RDD textFile() for better optimization.
+    Returns DataFrame with page XML strings.
+    """
+    logging.info(f"Reading dump file: {dump_path}")
+
+    file_size_gb = dump_path.stat().st_size / 1e9
+
+    # For small sample sizes, fewer partitions is faster (less overhead)
+    # Only increase partitions for large files when not sampling
+    if file_size_gb > 50 and (max_pages is None or max_pages > 10000):
+        partitions = max(256, partitions)
+        logging.info(f"Large file detected ({file_size_gb:.1f}GB), using {partitions} partitions")
+    else:
+        logging.info(f"Using {partitions} partitions for file ({file_size_gb:.1f}GB)")
+
+    # Read using DataFrame API instead of RDD
+    if dump_path.suffix == '.bz2':
+        logging.warning("Processing compressed file - this may be slower")
+        lines_df = spark.read.text(str(dump_path))
+    else:
+        lines_df = spark.read.text(str(dump_path))
+
+    # Repartition for parallel processing
+    lines_df = lines_df.repartition(partitions)
+
+    # Calculate max pages per partition if limit is set
+    max_pages_per_partition = None
+    if max_pages:
+        max_pages_per_partition = max(1, max_pages // partitions + 1)
+
+    # Define schema for page extraction output
+    page_schema = StructType([
+        StructField("page_xml", StringType(), False)
+    ])
+
+    # Create wrapper function
+    def extract_pages(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+        return extract_pages_from_lines_pandas(iterator, max_pages_per_partition)
+
+    # Extract pages using mapInPandas
+    pages_df = lines_df.mapInPandas(extract_pages, schema=page_schema)
+
+    # Apply global limit if specified
+    if max_pages:
+        pages_df = pages_df.limit(max_pages)
+
+    return pages_df
+
+
+def process_pages_dataframe(pages_df: DataFrame, extract_full_text: bool = True) -> Tuple[DataFrame, ...]:
+    """
+    Process page XML to extract structured data using DataFrame operations.
+
+    Uses UDFs for parsing (as these are complex operations not available in Spark SQL).
+    Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts, aliases, text_metadata?)
+    """
+    import hashlib
+
+    # Register UDFs for complex parsing operations
+    extract_page_udf = F.udf(extract_page_xml, MapType(StringType(), StringType()))
+    normalize_title_udf = F.udf(normalize_title, StringType())
+    extract_categories_udf = F.udf(extract_categories, ArrayType(StringType()))
+    extract_links_udf = F.udf(extract_internal_links, ArrayType(StringType()))
+    extract_infobox_udf = F.udf(extract_infobox_fields, MapType(StringType(), StringType()))
+    extract_abstract_udf = F.udf(extract_abstract, StringType())
+    clean_text_udf = F.udf(clean_wikitext_to_plaintext, StringType())
+
+    def compute_sha256(text: str) -> str:
+        if not text:
+            return ""
+        return hashlib.sha256(text.encode('utf-8')).hexdigest()
+    sha256_udf = F.udf(compute_sha256, StringType())
+
+    # Extract core fields from XML
+    parsed_df = pages_df.withColumn("parsed", extract_page_udf("page_xml"))
+    parsed_df = parsed_df.filter(F.col("parsed").isNotNull())
+
+    # Extract individual fields
+    pages_with_text = parsed_df.select(
+        F.col("parsed.page_id").cast(LongType()).alias("page_id"),
+        F.col("parsed.title").alias("title"),
+        normalize_title_udf(F.col("parsed.title")).alias("norm_title"),
+        F.col("parsed.namespace").cast(IntegerType()).alias("ns"),
+        F.col("parsed.redirect_to").alias("redirect_to"),
+        F.col("parsed.timestamp").alias("timestamp"),
+        F.col("parsed.text").alias("text")
+    )
+
+    # Filter to main namespace (ns=0) unless it's a redirect
+    pages_with_text = pages_with_text.filter(
+        (F.col("ns") == 0) | F.col("redirect_to").isNotNull()
+    )
+
+    # 1. Pages metadata
+    pages_meta_df = pages_with_text.select(
+        "page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"
+    )
+
+    # 2. Categories
+    categories_df = pages_with_text.filter(F.col("text").isNotNull()).select(
+        F.col("page_id"),
+        F.explode(extract_categories_udf(F.col("text"))).alias("category")
+    ).withColumn(
+        "norm_category", normalize_title_udf(F.col("category"))
+    )
+
+    # 3. Internal links
+    links_df = pages_with_text.filter(F.col("text").isNotNull()).select(
+        F.col("page_id"),
+        F.explode(extract_links_udf(F.col("text"))).alias("link_title")
+    ).withColumn(
+        "norm_link_title", normalize_title_udf(F.col("link_title"))
+    )
+
+    # 4. Infobox fields
+    infobox_df = pages_with_text.filter(F.col("text").isNotNull()).select(
+        F.col("page_id"),
+        extract_infobox_udf(F.col("text")).alias("infobox_map")
+    ).select(
+        F.col("page_id"),
+        F.explode(F.col("infobox_map")).alias("key", "value")
+    )
+
+    # 5. Abstracts
+    abstracts_df = pages_with_text.filter(F.col("text").isNotNull()).select(
+        F.col("page_id"),
+        extract_abstract_udf(F.col("text")).alias("abstract_text")
+    ).filter(F.length("abstract_text") > 0)
+
+    # 6. Aliases from redirects
+    aliases_df = pages_with_text.filter(F.col("redirect_to").isNotNull()).select(
+        normalize_title_udf(F.col("title")).alias("alias_norm_title"),
+        normalize_title_udf(F.col("redirect_to")).alias("canonical_norm_title")
+    )
+
+    # 7. Full text extraction (optional)
+    if extract_full_text:
+        text_metadata_df = pages_with_text.filter(
+            (F.col("text").isNotNull()) &
+            (F.length(F.col("text")) > 0) &
+            (F.col("redirect_to").isNull())
+        ).select(
+            F.col("page_id"),
+            F.col("title"),
+            F.col("timestamp"),
+            clean_text_udf(F.col("text")).alias("plain_text")
+        ).filter(
+            F.length(F.col("plain_text")) > 0
+        ).withColumn(
+            "content_sha256", sha256_udf(F.col("plain_text"))
+        ).withColumn(
+            "content_length", F.length(F.col("plain_text"))
+        ).select(
+            "page_id",
+            "title",
+            "content_sha256",
+            "content_length",
+            "timestamp",
+            "plain_text"
+        )
+
+        return (pages_meta_df, categories_df, links_df, infobox_df, abstracts_df, aliases_df, text_metadata_df)
+    else:
+        return (pages_meta_df, categories_df, links_df, infobox_df, abstracts_df, aliases_df)
+
+
+def write_text_files_pandas(
+    iterator: Iterator[pd.DataFrame],
+    text_dir: str
+) -> Iterator[pd.DataFrame]:
+    """
+    Write text files using pandas - runs via mapInPandas.
+
+    Replaces RDD mapPartitions for text file writing.
+    """
+    from pathlib import Path
+    import logging
+
+    log = logging.getLogger("wiki_extractor.text_writer")
+    text_path = Path(text_dir)
+    text_path.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    for pdf in iterator:
+        for _, row in pdf.iterrows():
+            sha256 = row['content_sha256']
+            content = row['text_content']
+            if sha256 and content:
+                file_path = text_path / f'{sha256}.txt'
+                if not file_path.exists():
+                    try:
+                        file_path.write_text(content, encoding='utf-8')
+                        written += 1
+                    except Exception as e:
+                        log.warning(f"Failed to write {sha256}.txt: {e}")
+
+    # Return count as DataFrame
+    yield pd.DataFrame({'files_written': [written]})
+
+
+def main() -> int:
+    """Main entry point."""
+    args = parse_args()
+    start_time = time.time()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    # Setup structured logger
+    log_path = Path(args.log)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    struct_logger = StructuredLogger(log_path)
+    struct_logger.log("start", wiki_in=args.wiki_in, out=args.out, max_pages=args.wiki_max_pages)
+
+    # Paths
+    input_dir = Path(args.wiki_in)
+    output_dir = Path(args.out)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Find dump files
+    dump_files = find_wiki_dumps(input_dir, args.prefer_uncompressed)
+    if not dump_files:
+        logger.error(f"No Wikipedia dump files found in {input_dir}")
+        struct_logger.log("error", message="No dump files found")
+        return 1
+
+    logger.info(f"Found {len(dump_files)} dump file(s)")
+    dump_file = dump_files[0]
+    logger.info(f"Processing: {dump_file} ({dump_file.stat().st_size / 1e9:.1f} GB)")
+
+    if args.dry_run:
+        logger.info("Dry run mode - listing files only")
+        for f in dump_files:
+            print(f)
+        return 0
+
+    # Create Spark session with DataFrame-optimized configuration
+    spark_builder = SparkSession.builder \
+        .appName("WikiExtractor-DataFrame") \
+        .master("local[*]") \
+        .config("spark.driver.memory", os.environ.get('SPARK_DRIVER_MEMORY', '8g')) \
+        .config("spark.executor.memory", os.environ.get('SPARK_EXECUTOR_MEMORY', '4g')) \
+        .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.driver.maxResultSize", "4g") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
+        .config("spark.sql.shuffle.partitions", str(args.partitions))
+
+    file_size_gb = dump_file.stat().st_size / 1e9
+    if file_size_gb > 50:
+        spark_builder = spark_builder \
+            .config("spark.memory.fraction", "0.8") \
+            .config("spark.memory.storageFraction", "0.3") \
+            .config("spark.sql.autoBroadcastJoinThreshold", "-1")
+
+    spark = spark_builder.getOrCreate()
+    spark.sparkContext.setLogLevel("WARN")
+
+    try:
+        # Adjust partitions for small sample sizes to improve performance
+        effective_partitions = args.partitions
+        if args.wiki_max_pages and args.wiki_max_pages <= 10000:
+            # Use fewer partitions for small samples to reduce overhead
+            effective_partitions = min(16, args.partitions)
+            logger.info(f"Using {effective_partitions} partitions for small sample (max_pages={args.wiki_max_pages})")
+
+        # Read dump file using DataFrame API
+        pages_df = read_dump_as_dataframe(
+            spark, dump_file, args.wiki_max_pages, effective_partitions
+        )
+
+        # CRITICAL: Cache the pages DataFrame to avoid re-scanning 111GB file
+        # This is essential when max_pages is set - without caching, each
+        # downstream operation would re-scan the entire file
+        if args.wiki_max_pages:
+            logger.info(f"Caching {args.wiki_max_pages} pages to avoid re-scanning large file...")
+            pages_df = pages_df.cache()
+            # Force materialization of cache
+            cached_count = pages_df.count()
+            logger.info(f"Cached {cached_count} pages in memory")
+
+        # Determine if text extraction is enabled
+        extract_text = args.extract_text and not args.no_text
+
+        # Process pages using DataFrame operations
+        logger.info("Extracting structured data (DataFrame API)...")
+        if extract_text:
+            logger.info("Full text extraction ENABLED")
+            (pages_meta_df, categories_df, links_df,
+             infobox_df, abstracts_df, aliases_df, text_metadata_df) = process_pages_dataframe(pages_df, extract_full_text=True)
+        else:
+            logger.info("Full text extraction DISABLED")
+            (pages_meta_df, categories_df, links_df,
+             infobox_df, abstracts_df, aliases_df) = process_pages_dataframe(pages_df, extract_full_text=False)
+
+        # Write outputs
+        logger.info("Writing output files...")
+
+        # Cache pages_meta_df since it's used for count and write
+        pages_meta_df = pages_meta_df.cache()
+
+        # Pages metadata - get count first (triggers cache), then write
+        pages_count = pages_meta_df.count()
+        logger.info(f"Processing {pages_count} pages...")
+
+        pages_path = output_dir / "pages.tsv"
+        write_tsv(pages_meta_df, pages_path,
+                  ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
+                  header=True)
+        logger.info(f"Wrote {pages_count} pages to {pages_path}")
+
+        # Categories
+        categories_path = output_dir / "categories.tsv"
+        write_tsv(categories_df, categories_path,
+                  ["page_id", "category", "norm_category"],
+                  header=True)
+        logger.info(f"Wrote categories to {categories_path}")
+
+        # Links
+        links_path = output_dir / "links.tsv"
+        write_tsv(links_df, links_path,
+                  ["page_id", "link_title", "norm_link_title"],
+                  header=True)
+        logger.info(f"Wrote links to {links_path}")
+
+        # Infobox
+        infobox_path = output_dir / "infobox.tsv"
+        write_tsv(infobox_df, infobox_path,
+                  ["page_id", "key", "value"],
+                  header=True)
+        logger.info(f"Wrote infobox to {infobox_path}")
+
+        # Abstracts
+        abstracts_path = output_dir / "abstract.tsv"
+        write_tsv(abstracts_df, abstracts_path,
+                  ["page_id", "abstract_text"],
+                  header=True)
+        logger.info(f"Wrote abstracts to {abstracts_path}")
+
+        # Aliases
+        aliases_path = output_dir / "aliases.tsv"
+        write_tsv(aliases_df, aliases_path,
+                  ["alias_norm_title", "canonical_norm_title"],
+                  header=True)
+        logger.info(f"Wrote aliases to {aliases_path}")
+
+        # Full text extraction (if enabled)
+        outputs_written = 6
+        text_files_written = 0
+        total_text_count = 0
+        unique_text_count = 0
+
+        if extract_text:
+            logger.info("Writing full text files...")
+            text_dir = output_dir / "text"
+            text_dir.mkdir(parents=True, exist_ok=True)
+
+            # Cache text_metadata_df for multiple operations
+            text_metadata_df = text_metadata_df.cache()
+            total_text_count = text_metadata_df.count()
+            logger.info(f"Found {total_text_count} text pages to process")
+
+            # Deduplicate by SHA256
+            unique_texts_df = text_metadata_df.groupBy("content_sha256").agg(
+                F.first("plain_text").alias("text_content"),
+                F.first("content_length").alias("length")
+            ).cache()
+            unique_text_count = unique_texts_df.count()
+            logger.info(f"Found {unique_text_count} unique text contents")
+
+            # Define schema for text file writing output
+            write_schema = StructType([
+                StructField("files_written", LongType(), False)
+            ])
+
+            text_dir_str = str(text_dir)
+
+            # Create wrapper function
+            def write_partition(iterator: Iterator[pd.DataFrame]) -> Iterator[pd.DataFrame]:
+                return write_text_files_pandas(iterator, text_dir_str)
+
+            # Write using mapInPandas instead of RDD mapPartitions
+            write_stats_df = unique_texts_df.mapInPandas(write_partition, schema=write_schema)
+
+            # Collect stats (small data only)
+            write_stats = write_stats_df.agg(F.sum("files_written")).collect()
+            text_files_written = write_stats[0][0] if write_stats else 0
+
+            logger.info(f"Wrote {text_files_written} unique text files to {text_dir}")
+
+            # Write metadata TSV
+            text_metadata_path = output_dir / "wiki_text_metadata.tsv"
+            write_tsv(
+                text_metadata_df.select("page_id", "title", "content_sha256", "content_length", "timestamp"),
+                text_metadata_path,
+                ["page_id", "title", "content_sha256", "content_length", "timestamp"],
+                header=True
+            )
+            logger.info(f"Wrote text metadata to {text_metadata_path}")
+            logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({text_files_written} files written)")
+
+            outputs_written = 8
+
+        # Generate stats
+        stats = {
+            "pages": pages_count,
+            "outputs_written": outputs_written,
+            "files_processed": 1,
+        }
+
+        if extract_text:
+            stats["text_files_written"] = text_files_written
+            stats["text_pages"] = total_text_count
+            stats["unique_texts"] = unique_text_count
+
+        # Write manifest
+        duration = time.time() - start_time
+        manifest = {
+            "timestamp": datetime.now().isoformat(),
+            "duration_seconds": round(duration, 2),
+            "api": "DataFrame",
+            "input": str(dump_file),
+            "input_size_gb": round(dump_file.stat().st_size / 1e9, 2),
+            "max_pages": args.wiki_max_pages,
+            "outputs": {
+                "pages": str(pages_path),
+                "categories": str(categories_path),
+                "links": str(links_path),
+                "infobox": str(infobox_path),
+                "abstracts": str(abstracts_path),
+                "aliases": str(aliases_path),
+            },
+            "stats": stats,
+            "spark_config": {
+                "driver_memory": os.environ.get('SPARK_DRIVER_MEMORY', '8g'),
+                "partitions": args.partitions,
+            },
+            "features": {
+                "text_extraction": extract_text
+            }
+        }
+
+        if extract_text:
+            manifest["outputs"]["text_metadata"] = str(text_metadata_path)
+            manifest["outputs"]["text_directory"] = str(text_dir)
+
+        runs_dir = Path('runs') / datetime.now().strftime('%Y%m%d_%H%M%S')
+        runs_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = runs_dir / 'manifest.json'
+        write_manifest(manifest_path, manifest)
+
+        struct_logger.log("complete", duration=duration, stats=stats)
+
+        # Print summary
+        logger.info("=" * 60)
+        logger.info("WIKIPEDIA EXTRACTION COMPLETE (DataFrame API)")
+        logger.info(f"Duration: {duration:.2f} seconds")
+        logger.info(f"Pages processed: {stats.get('pages', 'unknown')}")
+        logger.info(f"Outputs written: {stats['outputs_written']}")
+        logger.info(f"Manifest: {manifest_path}")
+        logger.info("=" * 60)
+
+    except Exception as e:
+        logger.error(f"Extraction failed: {e}")
+        struct_logger.log("error", message=str(e))
+        raise
+    finally:
+        spark.stop()
+        struct_logger.close()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

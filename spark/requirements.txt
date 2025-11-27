@@ -1,0 +1,4 @@
+# Minimal requirements for Spark HTML extractor
+pyyaml>=6.0
+# Note: beautifulsoup4 is commented out to use pure Python html.parser
+# beautifulsoup4>=4.12.0
