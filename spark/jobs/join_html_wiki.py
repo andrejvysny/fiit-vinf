@@ -2,6 +2,8 @@
 """
 Spark job for joining HTML entities with Wikipedia canonical data.
 
+Uses pure DataFrame API for all operations (no RDD usage).
+
 Joins entities extracted from HTML (GitHub pages) with Wikipedia pages based on
 normalized entity values. Handles aliases, calculates confidence scores, and
 resolves collisions.
@@ -464,14 +466,17 @@ def main() -> int:
         logger.error(f"Wiki directory not found: {wiki_dir}")
         return 1
 
-    # Create Spark session
+    # Create Spark session with DataFrame-optimized configuration
     spark = SparkSession.builder \
-        .appName("WikiHtmlJoin") \
+        .appName("WikiHtmlJoin-DataFrame") \
         .master("local[*]") \
         .config("spark.driver.memory", os.environ.get('SPARK_DRIVER_MEMORY', '6g')) \
         .config("spark.executor.memory", os.environ.get('SPARK_EXECUTOR_MEMORY', '3g')) \
         .config("spark.sql.adaptive.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.shuffle.partitions", str(args.partitions)) \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("WARN")
@@ -556,6 +561,7 @@ def main() -> int:
         manifest = {
             "timestamp": datetime.now().isoformat(),
             "duration_seconds": round(duration, 2),
+            "api": "DataFrame",
             "inputs": {
                 "entities": str(entities_path),
                 "wiki_dir": str(wiki_dir),
@@ -584,7 +590,7 @@ def main() -> int:
 
         # Print summary
         logger.info("=" * 60)
-        logger.info("WIKI-HTML JOIN COMPLETE")
+        logger.info("WIKI-HTML JOIN COMPLETE (DataFrame API)")
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info(f"Total entities: {stats['total_entities']}")
         logger.info(f"Matched entities: {stats['matched_entities']} ({stats['match_rate']}%)")

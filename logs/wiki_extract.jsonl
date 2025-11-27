@@ -1,2 +1,5 @@
 {"ts": 1764205112.566297, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
 {"ts": 1764205268.2670758, "event": "error", "message": "An error occurred while calling o352.csv"}
+{"ts": 1764241842.2582836, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100}
+{"ts": 1764241853.2145624, "event": "error", "message": "An error occurred while calling o369.csv"}
+{"ts": 1764241991.9640572, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100}

@@ -1,0 +1,28 @@
+{
+  "timestamp": "2025-11-27T11:09:46.159105",
+  "duration_seconds": 16.7,
+  "code_hash": "2780313df84e7631",
+  "api": "DataFrame",
+  "arguments": {
+    "input_dir": "/opt/app/workspace/store/html",
+    "output_dir": "/opt/app/workspace/store/spark",
+    "sample": 100,
+    "partitions": 128,
+    "force": false,
+    "dry_run": false
+  },
+  "inputs": {
+    "total_files": 100,
+    "processed_files": 100
+  },
+  "outputs": {
+    "text_files_written": 0,
+    "entities_written": 36370,
+    "errors": 0
+  },
+  "spark_config": {
+    "driver_memory": "2g",
+    "executor_memory": "1g",
+    "partitions": 128
+  }
+}
