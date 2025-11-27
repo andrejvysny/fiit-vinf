@@ -25,64 +25,73 @@ pip install -r requirements.txt
 
 ## Core Commands
 
-### Pipeline Stages
+### Unified CLI (Recommended)
+
+All pipeline operations are available through the unified CLI:
+
+```bash
+# Show available commands
+bin/cli --help
+
+# Run full pipeline
+bin/cli pipeline
+
+# Run full pipeline with test data
+bin/cli pipeline --sample 100 --wiki-max-pages 1000
+```
+
+### Pipeline Stages (via CLI)
 
 ```bash
 # 1. Crawl GitHub
 python -m crawler --config config.yml
 
-# 2. Extract entities (Spark preferred, --local for fallback)
-bin/spark_extract --config config.yml
-bin/spark_extract --local --config config.yml  # Without Docker
+# 2. Extract entities from HTML (Spark via Docker)
+bin/cli extract                           # Full extraction
+bin/cli extract --sample 100              # Test with 100 files
+bin/cli extract --sample 100 --force      # Force re-extraction
+bin/cli extract --local                   # Fallback to Python (no Docker)
 
-# 3. Build search index
-python3 -m indexer.build --config config.yml
+# 3. Extract Wikipedia data
+bin/cli wiki --wiki-max-pages 100         # Test with 100 pages
+bin/cli wiki                              # Full extraction
 
-# 4. Query index
-python3 -m indexer.query --config config.yml --query "your terms"
+# 4. Join entities with Wikipedia
+bin/cli join                              # Full join
+bin/cli join --entities-max-rows 1000     # Test with 1000 entities
+
+# 5. Build PyLucene index
+bin/cli lucene-build                      # Build full index
+bin/cli lucene-build --limit 1000         # Test with 1000 docs
+
+# 6. Search the index
+bin/cli lucene-search "python web"
+bin/cli lucene-search --query "python AND docker" --type boolean
+bin/cli lucene-search --type range --field star_count --min-value 1000
+
+# 7. Compare TF-IDF vs Lucene
+bin/cli lucene-compare
 ```
 
-### Wikipedia Pipeline
+### Direct Docker Compose (Alternative)
 
 ```bash
-# Test first (100 pages)
-bin/spark_wiki_extract --wiki-max-pages 100 --partitions 8
-
-# Full extraction (requires 16-32GB RAM, 2-3 hours)
-SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g bin/spark_wiki_extract --partitions 512
-
-# Batch join (entities → Wikipedia)
-bin/spark_join_wiki \
-  --entities workspace/store/entities/entities.tsv \
-  --wiki workspace/store/wiki \
-  --out workspace/store/join
-
-# Streaming TOPICS join (requires Java 11 or 17, not 24)
-bin/spark_join_wiki_topics \
-  --entities workspace/store/spark/entities/entities.tsv \
-  --wiki workspace/store/wiki \
-  --out workspace/store/wiki/join
+# Run individual services directly
+docker compose run --rm spark-extract
+docker compose run --rm spark-wiki
+docker compose run --rm spark-join
+docker compose run --rm lucene-build
+docker compose run --rm lucene-search
+docker compose run --rm lucene-compare
 ```
 
-### PyLucene Index (Advanced Queries)
+### Streaming Topics Join (requires local Spark)
 
 ```bash
-# Build PyLucene index
-python -m lucene_indexer.build \
-  --text-dir workspace/store/text \
-  --entities workspace/store/entities/entities.tsv \
-  --wiki-join workspace/store/join/html_wiki.tsv \
-  --output workspace/store/lucene_index
-
-# Search with different query types
-python -m lucene_indexer.search --query "python web" --type simple
-python -m lucene_indexer.search --query "python AND docker" --type boolean
-python -m lucene_indexer.search --field star_count --min-value 1000 --type range
-python -m lucene_indexer.search --query "machine learning" --type phrase
-python -m lucene_indexer.search --query "pyhton" --type fuzzy
-
-# Compare TF-IDF vs Lucene
-python -m lucene_indexer.compare --queries "python,docker,web" --output reports/comparison.md
+# Streaming join for TOPICS with relevance filtering
+bin/cli join-topics
+bin/cli join-topics --maxFilesPerTrigger 8    # Lower memory usage
+bin/cli join-topics --clean                    # Reset checkpoints
 ```
 
 ### Testing
@@ -103,22 +112,24 @@ python -m unittest tests.test_regexes.TestRegexes.test_stars_pattern
 
 ## Key CLI Flags
 
-| Tool | Flag | Purpose |
-|------|------|---------|
-| `bin/spark_extract` | `--sample N` | Process first N files |
-| `bin/spark_extract` | `--force` | Overwrite outputs |
-| `bin/spark_extract` | `--dry-run` | List files without processing |
-| `bin/spark_extract` | `--local` | Fallback to Python (no Docker) |
-| `bin/spark_wiki_extract` | `--wiki-max-pages N` | Limit pages for testing |
-| `bin/spark_wiki_extract` | `--no-text` | Skip full text extraction |
-| `bin/spark_join_wiki` | `--entities-max-rows N` | Limit entities for testing |
-| `bin/spark_join_wiki_topics` | `--maxFilesPerTrigger N` | Bounded memory (default: 16) |
-| `bin/spark_join_wiki_topics` | `--clean` | Reset checkpoints |
-| `indexer.build` | `--limit N` | Process N documents |
-| `indexer.query` | `--top N` | Return top N results |
-| `lucene_indexer.build` | `--limit N` | Limit docs for PyLucene index |
-| `lucene_indexer.search` | `--type TYPE` | Query type (simple/boolean/range/phrase/fuzzy) |
-| `lucene_indexer.compare` | `--queries Q` | Compare TF-IDF vs Lucene results |
+| Command | Flag | Purpose |
+|---------|------|---------|
+| `bin/cli extract` | `--sample N` | Process first N files |
+| `bin/cli extract` | `--force` | Overwrite outputs |
+| `bin/cli extract` | `--dry-run` | List files without processing |
+| `bin/cli extract` | `--local` | Fallback to Python (no Docker) |
+| `bin/cli wiki` | `--wiki-max-pages N` | Limit pages for testing |
+| `bin/cli wiki` | `--no-text` | Skip full text extraction |
+| `bin/cli join` | `--entities-max-rows N` | Limit entities for testing |
+| `bin/cli join-topics` | `--maxFilesPerTrigger N` | Bounded memory (default: 16) |
+| `bin/cli join-topics` | `--clean` | Reset checkpoints |
+| `bin/cli lucene-build` | `--limit N` | Limit docs for PyLucene index |
+| `bin/cli lucene-search` | `--type TYPE` | Query type (simple/boolean/range/phrase/fuzzy) |
+| `bin/cli lucene-search` | `--top N` | Number of results |
+| `bin/cli pipeline` | `--skip-extract` | Skip HTML extraction step |
+| `bin/cli pipeline` | `--skip-wiki` | Skip Wikipedia extraction step |
+| `bin/cli pipeline` | `--skip-join` | Skip entity-wiki join step |
+| `bin/cli pipeline` | `--skip-lucene` | Skip Lucene index build step |
 
 ## Architecture
 
@@ -194,13 +205,16 @@ entities.tsv + wiki/*.tsv → join_html_wiki → workspace/store/join/
 
 ```bash
 # HTML extraction (8-16GB system)
-SPARK_DRIVER_MEMORY=6g SPARK_EXECUTOR_MEMORY=4g bin/spark_extract
+SPARK_DRIVER_MEMORY=6g SPARK_EXECUTOR_MEMORY=4g bin/cli extract
 
 # Wikipedia extraction (16-32GB system)
-SPARK_DRIVER_MEMORY=12g SPARK_EXECUTOR_MEMORY=6g bin/spark_wiki_extract
+SPARK_DRIVER_MEMORY=8g SPARK_EXECUTOR_MEMORY=4g bin/cli wiki
 
 # For OOM errors: increase driver memory and partitions
-SPARK_DRIVER_MEMORY=16g bin/spark_wiki_extract --partitions 1024
+SPARK_DRIVER_MEMORY=12g PARTITIONS=512 bin/cli wiki
+
+# Entity-Wiki join
+SPARK_DRIVER_MEMORY=6g SPARK_EXECUTOR_MEMORY=3g bin/cli join
 ```
 
 ### Critical Constraints

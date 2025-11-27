@@ -150,50 +150,28 @@ def process_html_batch(
             continue
 
 
-def write_text_partition(
-    partition_idx: int,
-    records: Iterator[Tuple[str, str, List[Tuple[str, str, str, str]]]],
-    text_dir: str,
-    force: bool
-) -> Iterator[Tuple[int, int, int]]:
-    """
-    Write text files for a partition - runs on workers, not driver.
-    Yields (text_written, entities_count, errors) per record.
-    """
-    text_path = Path(text_dir)
-    text_path.mkdir(parents=True, exist_ok=True)
-
-    for doc_id, text, entities in records:
-        text_written = 0
-        errors = 0
-
-        if text:
-            text_file = text_path / f"{doc_id}.txt"
-            if force or not text_file.exists():
-                try:
-                    text_file.write_text(text, encoding='utf-8')
-                    text_written = 1
-                except Exception as e:
-                    logging.error(f"[Partition {partition_idx}] Failed to write text for {doc_id}: {e}")
-                    errors = 1
-
-        yield (text_written, len(entities), errors)
-
-
-def write_outputs_distributed(
+def write_outputs_single_pass(
     spark: SparkSession,
     results_rdd,
     output_dir: Path,
-    force: bool = False
+    force: bool = False,
+    partitions: int = 64
 ) -> dict:
     """
-    Write text files and entities TSV using distributed processing.
+    Single-pass architecture: Write text files AND entities in ONE mapPartitions call.
 
-    Text files are written by workers using foreachPartition.
-    Entities are written using Spark DataFrame for scalability.
-    Stats are aggregated using reduce (only small tuples collected).
+    Key optimizations:
+    1. NO double computation - everything processed exactly once
+    2. NO coalesce(1) bottleneck - entities written to partition files, merged at end
+    3. NO DataFrame overhead - direct TSV writes from workers
+    4. Only small stats tuples collected to driver
+
+    Architecture:
+    - Each partition writes its own text files and entities TSV file
+    - Returns only (text_count, entity_count, errors) per partition
+    - Driver merges partition entity files into final TSV
     """
-    from pyspark.sql.types import StructType, StructField, StringType
+    import shutil
 
     stats = {
         'text_files_written': 0,
@@ -204,110 +182,91 @@ def write_outputs_distributed(
     # Ensure output directories exist (on driver - they're shared via mount)
     text_dir = output_dir / 'text'
     entities_dir = output_dir / 'entities'
+    entities_parts_dir = entities_dir / '_parts'
     text_dir.mkdir(parents=True, exist_ok=True)
     entities_dir.mkdir(parents=True, exist_ok=True)
 
-    # Broadcast configuration to workers
-    text_dir_str = str(text_dir)
+    # Clean up old partition files
+    if entities_parts_dir.exists():
+        shutil.rmtree(entities_parts_dir)
+    entities_parts_dir.mkdir(parents=True, exist_ok=True)
 
-    # Phase 1: Write text files in workers and collect stats
-    # This uses mapPartitionsWithIndex to write files and return only stats (not content)
-    def write_and_count(partition_idx, records):
-        """Write text files in worker and yield stats tuples."""
+    # Broadcast paths to workers
+    text_dir_str = str(text_dir)
+    entities_parts_dir_str = str(entities_parts_dir)
+    force_write = force
+
+    def process_and_write_all(partition_idx: int, records):
+        """
+        Single-pass processing: write text files AND entities in one iteration.
+        Returns only stats tuple - no large data transferred to driver.
+        """
+        from pathlib import Path
+        import logging
+
         text_path = Path(text_dir_str)
         text_path.mkdir(parents=True, exist_ok=True)
 
-        partition_stats = [0, 0, 0]  # text_written, entities_count, errors
+        # Open partition-specific entities file
+        entities_file = Path(entities_parts_dir_str) / f"part-{partition_idx:05d}.tsv"
 
-        for doc_id, text, entities in records:
-            if text:
-                text_file = text_path / f"{doc_id}.txt"
-                if force or not text_file.exists():
-                    try:
-                        text_file.write_text(text, encoding='utf-8')
-                        partition_stats[0] += 1
-                    except Exception as e:
-                        logging.error(f"[Partition {partition_idx}] Failed to write text for {doc_id}: {e}")
-                        partition_stats[2] += 1
+        text_written = 0
+        entity_count = 0
+        errors = 0
 
-            partition_stats[1] += len(entities)
+        with open(entities_file, 'w', encoding='utf-8') as ef:
+            for doc_id, text, entities in records:
+                # Write text file
+                if text:
+                    text_file = text_path / f"{doc_id}.txt"
+                    if force_write or not text_file.exists():
+                        try:
+                            text_file.write_text(text, encoding='utf-8')
+                            text_written += 1
+                        except Exception as e:
+                            logging.error(f"[Partition {partition_idx}] Failed to write text for {doc_id}: {e}")
+                            errors += 1
 
-            # Yield entities for the next phase (without text content)
-            for entity in entities:
-                if len(entity) >= 4:
-                    _, entity_type, value, offsets_json = entity[:4]
-                    # Sanitize TSV fields
-                    value = str(value).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
-                    offsets_json = str(offsets_json).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
-                    yield ('entity', doc_id, entity_type, value, offsets_json)
+                # Write entities directly to partition file
+                for entity in entities:
+                    if len(entity) >= 4:
+                        _, entity_type, value, offsets_json = entity[:4]
+                        # Sanitize TSV fields
+                        value = str(value).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+                        offsets_json = str(offsets_json).replace('\t', ' ').replace('\n', ' ').replace('\r', ' ')
+                        ef.write(f"{doc_id}\t{entity_type}\t{value}\t{offsets_json}\n")
+                        entity_count += 1
 
-        # Yield partition stats as a special record
-        yield ('stats', str(partition_stats[0]), str(partition_stats[1]), str(partition_stats[2]), '')
+        # Return only stats - minimal data transfer
+        yield (text_written, entity_count, errors)
 
-    # Process all partitions - write text files and extract entities
-    processed_rdd = results_rdd.mapPartitionsWithIndex(write_and_count)
+    # Execute single-pass processing
+    stats_rdd = results_rdd.mapPartitionsWithIndex(process_and_write_all)
 
-    # Separate stats from entities
-    stats_rdd = processed_rdd.filter(lambda x: x[0] == 'stats')
-    entities_rdd = processed_rdd.filter(lambda x: x[0] == 'entity')
+    # Collect stats (only 3 ints per partition - very small)
+    partition_stats = stats_rdd.collect()
 
-    # Aggregate stats (only small tuples, not content)
-    def sum_stats(a, b):
-        return ('stats', str(int(a[1]) + int(b[1])), str(int(a[2]) + int(b[2])), str(int(a[3]) + int(b[3])), '')
+    for text_cnt, entity_cnt, err_cnt in partition_stats:
+        stats['text_files_written'] += text_cnt
+        stats['entities_written'] += entity_cnt
+        stats['errors'] += err_cnt
 
-    # Use fold with initial value to handle empty RDDs
-    initial_stats = ('stats', '0', '0', '0', '')
-
-    # Collect stats - this is safe as it's just a few numbers
-    stats_collected = stats_rdd.collect()
-    if stats_collected:
-        total_stats = stats_collected[0]
-        for s in stats_collected[1:]:
-            total_stats = sum_stats(total_stats, s)
-        stats['text_files_written'] = int(total_stats[1])
-        stats['entities_written'] = int(total_stats[2])  # This counts entity occurrences
-        stats['errors'] = int(total_stats[3])
-
-    # Phase 2: Write entities using Spark DataFrame (distributed write)
+    # Merge partition entity files into final TSV (sequential on driver - fast I/O)
     entities_file = entities_dir / 'entities.tsv'
+    part_files = sorted(entities_parts_dir.glob("part-*.tsv"))
 
-    # Create DataFrame from entities RDD
-    schema = StructType([
-        StructField("record_type", StringType(), False),
-        StructField("doc_id", StringType(), False),
-        StructField("type", StringType(), False),
-        StructField("value", StringType(), False),
-        StructField("offsets_json", StringType(), False),
-    ])
+    with open(entities_file, 'w', encoding='utf-8') as out:
+        # Write header
+        out.write("doc_id\ttype\tvalue\toffsets_json\n")
 
-    entities_df = spark.createDataFrame(entities_rdd, schema=schema)
+        # Concatenate all partition files
+        for part_file in part_files:
+            with open(part_file, 'r', encoding='utf-8') as pf:
+                for line in pf:
+                    out.write(line)
 
-    # Write as single TSV file
-    tmp_dir = str(entities_file) + ".tmpdir"
-    import shutil
-    if Path(tmp_dir).exists():
-        shutil.rmtree(tmp_dir)
-
-    (
-        entities_df.select("doc_id", "type", "value", "offsets_json")
-        .coalesce(1)
-        .write.mode("overwrite")
-        .option("sep", "\t")
-        .option("header", "true")
-        .option("quote", "\u0000")
-        .option("encoding", "UTF-8")
-        .csv(tmp_dir)
-    )
-
-    # Move part file to final location
-    tmp_path = Path(tmp_dir)
-    part_files = list(tmp_path.glob("part-*"))
-    if part_files:
-        part_files[0].rename(entities_file)
-        shutil.rmtree(tmp_path, ignore_errors=True)
-        # Count entities from file for accurate stats
-        with open(entities_file, 'r', encoding='utf-8') as f:
-            stats['entities_written'] = sum(1 for _ in f) - 1  # Subtract header
+    # Clean up partition files
+    shutil.rmtree(entities_parts_dir, ignore_errors=True)
 
     return stats
 
@@ -426,9 +385,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # NOTE: No caching - data flows through once to avoid memory issues
         results_rdd = files_rdd.mapPartitionsWithIndex(process_html_batch)
 
-        # Write outputs using distributed processing (no collect() on driver)
-        logger.info(f"Writing outputs to {output_dir} (distributed mode)")
-        stats = write_outputs_distributed(spark, results_rdd, output_dir, args.force)
+        # Write outputs using single-pass architecture (no double computation)
+        logger.info(f"Writing outputs to {output_dir} (single-pass mode)")
+        stats = write_outputs_single_pass(spark, results_rdd, output_dir, args.force, partitions)
 
         # Calculate duration
         duration = time.time() - start_time
