@@ -25,6 +25,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
+# Stats integration
+try:
+    from spark.lib.stats import PipelineStats, save_pipeline_summary
+    STATS_AVAILABLE = True
+except ImportError:
+    STATS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +167,14 @@ class QueryComparison:
         except Exception as e:
             logger.warning(f"Failed to load Lucene index: {e}")
 
+    def _extract_doc_hash(self, path) -> str:
+        """Extract document hash from file path for comparison.
+
+        Paths look like: /path/to/text/00/02/0002297ed0450b...txt
+        We extract the hash from the filename (stem).
+        """
+        return Path(path).stem
+
     def _query_tfidf(
         self,
         query: str,
@@ -176,11 +191,14 @@ class QueryComparison:
             results = self._tfidf_engine.search(query, top_k=top_k)
             latency = (time.perf_counter() - start) * 1000
 
+            # Use file hash from path for comparison with Lucene
+            doc_ids = [self._extract_doc_hash(r.path) for r in results]
+
             return QueryResult(
                 query=query,
                 index_type="tfidf",
                 query_type="simple",
-                doc_ids=[str(r.doc_id) for r in results],
+                doc_ids=doc_ids,
                 scores=[r.score for r in results],
                 latency_ms=latency,
                 result_count=len(results),
@@ -536,6 +554,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         lucene_index_dir=Path(args.lucene_index),
     )
 
+    # Initialize stats if available
+    stats = None
+    if STATS_AVAILABLE:
+        stats = PipelineStats("index_comparison")
+        stats.set_config(
+            tfidf_index=str(args.tfidf_index),
+            lucene_index=str(args.lucene_index),
+            queries_file=args.queries_file or "inline",
+            top_k=args.top,
+        )
+        stats.set_inputs(
+            total_queries=len(queries),
+            query_types=list(set(query_types)),
+        )
+
     try:
         # Run comparisons
         results = comparison.compare_queries(queries, query_types, args.top)
@@ -555,10 +588,71 @@ def main(argv: Optional[List[str]] = None) -> int:
                 json.dump(json_data, f, indent=2)
             logger.info(f"JSON output saved to {json_path}")
 
+        # Compute and save stats
+        if stats:
+            # Compute aggregate statistics
+            valid_comparisons = sum(1 for r in results if r.tfidf_result and r.lucene_result)
+            total_tfidf_latency = sum(r.tfidf_result.latency_ms for r in results if r.tfidf_result)
+            total_lucene_latency = sum(r.lucene_result.latency_ms for r in results if r.lucene_result)
+
+            overlap_sums = {5: 0.0, 10: 0.0, 20: 0.0}
+            for r in results:
+                for k in [5, 10, 20]:
+                    overlap_sums[k] += r.overlap_at_k.get(k, 0)
+
+            stats.set_outputs(
+                queries_compared=len(results),
+                valid_comparisons=valid_comparisons,
+                report_path=str(args.output),
+            )
+
+            if valid_comparisons > 0:
+                avg_tfidf_lat = total_tfidf_latency / valid_comparisons
+                avg_lucene_lat = total_lucene_latency / valid_comparisons
+                lat_improvement = (avg_tfidf_lat - avg_lucene_lat) / avg_tfidf_lat * 100 if avg_tfidf_lat > 0 else 0
+
+                stats.set_nested("comparison_metrics", "avg_tfidf_latency_ms", round(avg_tfidf_lat, 2))
+                stats.set_nested("comparison_metrics", "avg_lucene_latency_ms", round(avg_lucene_lat, 2))
+                stats.set_nested("comparison_metrics", "latency_improvement_pct", round(lat_improvement, 1))
+
+                for k in [5, 10, 20]:
+                    avg_overlap = overlap_sums[k] / valid_comparisons * 100
+                    stats.set_nested("comparison_metrics", f"avg_overlap_at_{k}", round(avg_overlap, 1))
+
+            # Stats by query type
+            query_type_stats = {}
+            for r in results:
+                qt = r.query_type
+                if qt not in query_type_stats:
+                    query_type_stats[qt] = {"count": 0, "overlap_20": []}
+                query_type_stats[qt]["count"] += 1
+                query_type_stats[qt]["overlap_20"].append(r.overlap_at_k.get(20, 0) * 100)
+
+            for qt, data in query_type_stats.items():
+                avg_overlap = sum(data["overlap_20"]) / len(data["overlap_20"]) if data["overlap_20"] else 0
+                stats.set_nested("query_types", qt, {
+                    "count": data["count"],
+                    "avg_overlap_at_20": round(avg_overlap, 1),
+                })
+
+            stats.finalize("completed")
+            stats_path = stats.save()
+            logger.info(f"Stats saved to {stats_path}")
+
+            # Regenerate pipeline summary
+            try:
+                save_pipeline_summary()
+            except Exception as e:
+                logger.warning(f"Could not regenerate pipeline summary: {e}")
+
         return 0
 
     except Exception as e:
         logger.error(f"Comparison failed: {e}")
+        if stats:
+            stats.add_error(str(e))
+            stats.finalize("error")
+            stats.save()
         return 1
 
     finally:

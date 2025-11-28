@@ -1,0 +1,56 @@
+{
+  "stage": "wiki_extraction",
+  "run_id": "20251128_175832",
+  "start_time": "2025-11-28T17:58:32.992403",
+  "end_time": "2025-11-28T17:58:35.392953",
+  "duration_seconds": 2.4,
+  "status": "completed",
+  "config": {
+    "mode": "native",
+    "max_pages": 500,
+    "partitions": 256,
+    "text_extraction": true
+  },
+  "inputs": {
+    "input_file": "/opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml",
+    "input_size_gb": 111.46,
+    "total_items": 500
+  },
+  "outputs": {
+    "pages_file": "/opt/app/workspace/store/wiki/pages.tsv",
+    "categories_file": "/opt/app/workspace/store/wiki/categories.tsv",
+    "links_file": "/opt/app/workspace/store/wiki/links.tsv",
+    "infobox_file": "/opt/app/workspace/store/wiki/infobox.tsv",
+    "abstracts_file": "/opt/app/workspace/store/wiki/abstract.tsv",
+    "aliases_file": "/opt/app/workspace/store/wiki/aliases.tsv"
+  },
+  "entities": {
+    "pages": {
+      "count": 500
+    },
+    "categories": {
+      "count": 3114
+    },
+    "links": {
+      "count": 101493
+    },
+    "infobox": {
+      "count": 2423
+    },
+    "abstracts": {
+      "count": 267
+    },
+    "aliases": {
+      "count": 177
+    },
+    "text_files": {
+      "count": 0
+    }
+  },
+  "performance": {
+    "pages_per_second": 208.12,
+    "success_rate": 100.0,
+    "error_count": 0
+  },
+  "errors": []
+}

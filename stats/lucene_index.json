@@ -1,0 +1,37 @@
+{
+  "stage": "lucene_index",
+  "run_id": "20251128_211942",
+  "start_time": "2025-11-28T21:19:42.614812",
+  "end_time": "2025-11-28T21:19:42.614845",
+  "duration_seconds": 0.0,
+  "status": "completed",
+  "config": {
+    "text_dir": "/opt/app/workspace/store/text",
+    "output_dir": "/opt/app/workspace/store/lucene_index",
+    "entities_path": "/opt/app/workspace/store/spark/entities/entities.tsv",
+    "wiki_join_path": "/opt/app/workspace/store/join/html_wiki.tsv"
+  },
+  "inputs": {
+    "text_dir": "/opt/app/workspace/store/text",
+    "entities_file": "/opt/app/workspace/store/spark/entities/entities.tsv",
+    "wiki_join_file": "/opt/app/workspace/store/join/html_wiki.tsv",
+    "total_items": 28353
+  },
+  "outputs": {
+    "index_dir": "/opt/app/workspace/store/lucene_index",
+    "docs_indexed": 28353,
+    "docs_with_entities": 30,
+    "docs_with_wiki": 6
+  },
+  "entities": {},
+  "performance": {
+    "docs_per_second": 1408.49,
+    "success_rate": 100.0,
+    "error_count": 0
+  },
+  "errors": [],
+  "index_stats": {
+    "total_entities": 10130,
+    "total_wiki_matches": 7
+  }
+}

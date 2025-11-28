@@ -1,0 +1,449 @@
+{
+  "queries": [
+    {
+      "query": "python web",
+      "query_type": "simple",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 50.12,
+        "top_5_docs": [
+          "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
+          "2eafae3eac0e94c291f01fcecf5ddd5fcef8b686a12f9ecd4de60a428ebb4775",
+          "42986e1430e4abdc974e39bb39de79063ece0940a7db5ea54d0e23e2ef4ea544",
+          "b580a742720f9c67de04ce8ee67c4c0523986e5640cbbbb71adfe4e3ee5816ff"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 70.07,
+        "top_5_docs": [
+          "42986e1430e4abdc974e39bb39de79063ece0940a7db5ea54d0e23e2ef4ea544",
+          "7ee306ec948d158c2ad180c098d9e5f5d642e7b188c800ec29ba79f3f8c54273",
+          "7ebbefc0c740a0920e161ef6a22e2d579eaa10e8b7543e9c6054dd98d205184c",
+          "7efb74e50bca6bfc9b04cd2fb7812e1aa849f17685bb8c5cac0373441579966f",
+          "d0757b9d15450ec203363b951305423bbd31a44f0bfdb6b98f18eaa1ca2c9720"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.2,
+        "10": 0.1,
+        "20": 0.05
+      },
+      "latency_improvement_pct": -39.8
+    },
+    {
+      "query": "machine learning",
+      "query_type": "simple",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 46.39,
+        "top_5_docs": [
+          "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
+          "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
+          "83dafbf643ab6928272d5dc62f2cfd5f874bd4bc68c801de37f7a70615be887d",
+          "f8e119d312c707ab66858ab250ff38eda4ea7257072cf2c60ee0790e90464351",
+          "dbe0d7bf9c9041045e53d48ce73ff94a0f42a964d1b7dbf172c3c66d8cf90dd3"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 36.12,
+        "top_5_docs": [
+          "c8a8175374ea1e993440f332c4f36c3323a7937dd3310850eed9c91d0b51ee59",
+          "4a9b14b261fd3d48d20372fe39ba298ad97fe62e4620f2074db8179a459c7a55",
+          "f680a552f2de9b5c362bac5aeba1e136afe66552ecc8692b1b0b2646919dee71",
+          "776836e9fe8ab1b4024af054015c66bb90e627148c805e8571650b56ed10c343",
+          "ab6282ff3ae27ed279c7c6519bb68e60a94fa71f2c2197b83d1f0d9fa3e19540"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.1
+      },
+      "latency_improvement_pct": 22.2
+    },
+    {
+      "query": "docker container",
+      "query_type": "simple",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 10.23,
+        "top_5_docs": [
+          "ea8bd38d8f7212d8f490437de6253e0d0553e9e6f31035740c3f7e082e557ccd",
+          "1373b0c80eacfdcb258a4f7a438ef70b79e6a1902e21129bb750dc1638977967",
+          "27d5d63ff55410a398d4e5d1ab016a53015c89df7b136b947797d6860b61fa75",
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
+          "fbac35606ab8ee907f745c4dfc845ae4acab1d2c413d2ce34168743bcdb5a350"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 27.06,
+        "top_5_docs": [
+          "d5a27af1ad65f1a71da99da08f2f728142b89a2f594cb1288ab574fd90fc0efd",
+          "3654daa392e40cf0fb4a09dabb677b03fc6d157b340388367126fbe4f1752703",
+          "bc44450cd6ceb48f41fab4a01096bf41490d167106316ec34761c52037243de5",
+          "753861fdaca43b35c31aa16e7ee7225cb6f7c39086fe91f2968f3c52ab7e56dd",
+          "a8d7ccaf2a28ff5a91da38460cff9fe5ea73c3ce353ab7c81de9ec1abd0cb4a3"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.1,
+        "20": 0.4
+      },
+      "latency_improvement_pct": -164.5
+    },
+    {
+      "query": "javascript framework",
+      "query_type": "simple",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 27.57,
+        "top_5_docs": [
+          "603f989f5182fc9df60100a8ab886d86ed63a642970e4c4b095f5d6abc6bbbab",
+          "0f7835db8771179c1c83ba3f11eb6a9f098f09347a4617bb5d8d5663e4e57779",
+          "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
+          "e0ebb21e0930400d9868322bed636aa78d43d56798f75ca06e69a373818b3b58",
+          "2eafae3eac0e94c291f01fcecf5ddd5fcef8b686a12f9ecd4de60a428ebb4775"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 43.93,
+        "top_5_docs": [
+          "02b6137ece169c71c0bf746a1a7477cc86ca5656352980983fefddb4f2db0bfd",
+          "440ebbf3852b122f73332873a6ea1d7d51a9ecd1430719495937815fb4a615d5",
+          "84b236f23742abf7431799cd52e9e4fadf5792d6c305e61c29e28a31aac7dd99",
+          "dc9183eb6a1447bd2d7d62885a43f0aee9bb70df4fb83b7a253049059783b384",
+          "568921edcf3971de2c053c183a179fd36ae3b6e2186437f44f6c8d396e5ba393"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.2,
+        "20": 0.1
+      },
+      "latency_improvement_pct": -59.3
+    },
+    {
+      "query": "database optimization",
+      "query_type": "simple",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 10.36,
+        "top_5_docs": [
+          "8a369ccb17363757e9ef8fa739624bc5328854a86642b6923122c0de73eb857f",
+          "d1e30fba2c49b0d5a8b57b292995596a55fef3fb6bf96cc6cc4591661a5f1d06",
+          "3b74d41bf804aed607873c938334046a1b6d7717101234e749b0a537d5efb80a",
+          "5da3730d21907771ac736e208b1510f26c809c236aec1cf461e3a2c28a4b5221",
+          "7d3ad9c2d18d5a684b205c9ddc5cb49aa3435346d7bbb89506f5fd8d8f766e15"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 28.35,
+        "top_5_docs": [
+          "d5ae8ff2e53a38c883f0b7b783d4528046930c8e79c11d5d32e632988ff5dc9b",
+          "a31b59e4bd21093dbd0c691b88dcdbfda42742a515d9a6be0d233164d4dbbf78",
+          "03864b75fb866ab790aa4c6f584ee0ff5b30454f86af65a97e4f07e109b2338f",
+          "8d22e9b5a1d25968f7926b60ea0f6e6ae3148319eb64d27e671ac8af54d47a9c",
+          "26811bc602633f510414e64b766731f0abb73cfd7ba59d3cf21887d5bf706943"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.1,
+        "20": 0.15
+      },
+      "latency_improvement_pct": -173.8
+    },
+    {
+      "query": "python AND docker",
+      "query_type": "boolean",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 46.31,
+        "top_5_docs": [
+          "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
+          "ea8bd38d8f7212d8f490437de6253e0d0553e9e6f31035740c3f7e082e557ccd",
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
+          "1373b0c80eacfdcb258a4f7a438ef70b79e6a1902e21129bb750dc1638977967",
+          "29d1e3d179f239befd67c1118af2f0ef93b31abe74a4aee6946e5d390115af77"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 34.53,
+        "top_5_docs": [
+          "2b4ea162c076f980f8a61998d78677a474834aa6243e7b761e8ffb4b03886ade",
+          "8ed1b07b784d7de1f13001d454d3b100d1472aa1aec586786aa1955f57c47969",
+          "bdcd5ba8ab3f6f0eb61c1eca88150a3a31bfefb27bf53af23ca800aec40a1aa9",
+          "ef9657581eec80322b85ea5257ebc4246c960e5a1972149fb78d5514aae17ae0",
+          "0002297ed0450b8dbb47cfd695075755b36ce04247e6e47aa6482dbb5018790b"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.2,
+        "20": 0.45
+      },
+      "latency_improvement_pct": 25.4
+    },
+    {
+      "query": "web OR api",
+      "query_type": "boolean",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 53.88,
+        "top_5_docs": [
+          "b580a742720f9c67de04ce8ee67c4c0523986e5640cbbbb71adfe4e3ee5816ff",
+          "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
+          "9446ff5017994b5d3bcd2c2e6f8fc494de137cad82c49b1fae42168f2aa6279d",
+          "0a5dd039f449a314ae4057c058d6d32f06da787e1a770bc3b0577eaf7764c839",
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 28.41,
+        "top_5_docs": [
+          "bf655c4f33e6ed8f13017a43460467dcf80f4b881af549a5f6285a4d236a723b",
+          "7981aef817ee50a6856c159d6165894c514adad3caa378f11e6e5694cb6a71c5",
+          "7efb74e50bca6bfc9b04cd2fb7812e1aa849f17685bb8c5cac0373441579966f",
+          "5526c263497037f81ca6ab1f2ecae531e2e219e221dec803b8d36997c851630b",
+          "f4982e53248bb7e57c8332a27d2021f6ed5994541d6f3dc9c7d8a3f6d0e419e1"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.05
+      },
+      "latency_improvement_pct": 47.3
+    },
+    {
+      "query": "machine AND learning AND neural",
+      "query_type": "boolean",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 38.35,
+        "top_5_docs": [
+          "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
+          "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
+          "dbe0d7bf9c9041045e53d48ce73ff94a0f42a964d1b7dbf172c3c66d8cf90dd3",
+          "40dffd8482fcf96aeeece76610bb4cfc9c83ce998ee9660c1d36530d91b2ef4f",
+          "62f2b6234e2f5805f4b4611daddbf088a80beb4a8244c8c3c1aa7ea567131d26"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 17.09,
+        "top_5_docs": [
+          "4b96571125639f9bde4cb2d7820f530cd5bfca2357a4e76bd0164e59ff2386ca",
+          "64745261e819e76853aff130790e3b9ea65fb43448bd00e8aad88857f7be0843",
+          "b230f41a17615c6f6a370188e20f7cc369e52f945dbc8a3597855bf14deff296",
+          "1d5e67670c42b4eab6512ba4c6cd454b3086394afc4b49b9d8e8aa1f7081d8df",
+          "3da7bb04f84cae093ce80c0ab695fbb43b2504eb1f020e24afd31639a09fbe64"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.3
+      },
+      "latency_improvement_pct": 55.4
+    },
+    {
+      "query": "machine learning",
+      "query_type": "phrase",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 27.72,
+        "top_5_docs": [
+          "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
+          "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
+          "83dafbf643ab6928272d5dc62f2cfd5f874bd4bc68c801de37f7a70615be887d",
+          "f8e119d312c707ab66858ab250ff38eda4ea7257072cf2c60ee0790e90464351",
+          "dbe0d7bf9c9041045e53d48ce73ff94a0f42a964d1b7dbf172c3c66d8cf90dd3"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 41.87,
+        "top_5_docs": [
+          "4d758f713e579013b59a27f5922f33b574c691abf61f0d457a90c2e8408494ae",
+          "6e8bd6de723921e8fc8f4dbc0db9988ea2d4336a402c23cd05bddb578d692ca8",
+          "038f0973461acf3a88272f4714391416d19fd205a6e0557c0306223aa1420a68",
+          "8b43e4c73a051bd5d8c1f7ee3ab5c419612efe9cbbb0b76e467a15bb38dcf32c",
+          "710eeeb1d6a04274c1ca38997b088b2a3772035403f08de151f509351399be92"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.1,
+        "20": 0.3
+      },
+      "latency_improvement_pct": -51.1
+    },
+    {
+      "query": "web application",
+      "query_type": "phrase",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 17.37,
+        "top_5_docs": [
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
+          "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
+          "4ebf1781f5c3eebe5ca6e2ec0eda0267c345883d34034599176d564c98189cfd",
+          "0a5dd039f449a314ae4057c058d6d32f06da787e1a770bc3b0577eaf7764c839",
+          "3402b84b8b9e4aee525969a3c74bb28fd136340f7556de05c34e41157924a481"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 35.82,
+        "top_5_docs": [
+          "39f549f5234a00a12bd1b95293573e29833a177702d14cb862bd80600993bee4",
+          "3c5ce80611d671bf384a456629a268e4216af245587650e50385a9b8c9ad2a53",
+          "ffda302cabe41cfef03a191e550f523242f788a0ae85067c1daef7d0296de885",
+          "a30fa0dde9e99944cf7b58b816d96c922c836509ae71106cc693f04d02a19eb6",
+          "7a2aea1c809030688e7d0a40d41a432833cec0c771f546e84b4b642be73f8d46"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.1
+      },
+      "latency_improvement_pct": -106.3
+    },
+    {
+      "query": "open source",
+      "query_type": "phrase",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 59.58,
+        "top_5_docs": [
+          "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
+          "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
+          "b580a742720f9c67de04ce8ee67c4c0523986e5640cbbbb71adfe4e3ee5816ff",
+          "45eded4c4b4a1f588b93067faf5ac3468ac570d83f16aa4aa88ca17e5917d06a",
+          "38ee99fe325ca3b3c73cfbfd2bdfb7d1089efca8df0c61fc0d38ccdcf23a7626"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 33.3,
+        "top_5_docs": [
+          "bf28d672c65d2baf0702a4546a9a567c7960b441bb007d83f1a55280af2b9e54",
+          "5928ba5174b12777344f439d3fd677bddf0f09f7e3972c776a98e0fe80bf6299",
+          "639f67fffdf43a83226c0904263e8d0c9266a0699e4ab6cf176ef8aaa2604280",
+          "dd657148b7e8e436f446defa3dd90ad6c901ab41a77121a7de645bbd51a2eea4",
+          "8c76061876c210eddda7d639e77ac03f8bf832511106a63987245483fc949a93"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.05
+      },
+      "latency_improvement_pct": 44.1
+    },
+    {
+      "query": "pyhton",
+      "query_type": "fuzzy",
+      "tfidf": {
+        "result_count": 20,
+        "latency_ms": 0.43,
+        "top_5_docs": [
+          "0b70bcf38f46eeba519bdd7254e67aab1de4dbab49187aefece3835cca49db38",
+          "27bc8781d28979ae8c32dd423bff5da60cd492af10ce95758afeabfae937dddf",
+          "3a525516f5b60158c5a84f6ffd4ee4385e435fc960bb5104d985400843d5d73f",
+          "3b65e244d1bdc21dea4ec1128e4b4090fdd6271c32b3b4ad03564642aac36c8e",
+          "4036fab6df5573ee58bd4b203876dfe55705edcc6e00f4c6eec9c073d44f91a6"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 104.63,
+        "top_5_docs": [
+          "b4177b034209d86ccd82dd456abf762b7443aaebd01b69d7646ef4740ccda5da",
+          "047949c94f23e7a3d0e17c29df1b29e2a80052ac6d74d4072212c34a99ad1786",
+          "abd4ef41626ca4f15d1c099d4d5cf75910ff7a020bb1624efd9c6c148cedcf82",
+          "3a5c377b40eeacc78e634fb724b7128723cc182d06f51434952e9ea42605d375",
+          "804a94c7ef508915af5c488d4e2d02688613f60503a338f0080752122c4de757"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "latency_improvement_pct": -24440.5
+    },
+    {
+      "query": "machin lerning",
+      "query_type": "fuzzy",
+      "tfidf": {
+        "result_count": 19,
+        "latency_ms": 0.62,
+        "top_5_docs": [
+          "15add4b7d485f2579d494cb52f0b648fd8e281b488551afbab9fd6df0d876448",
+          "3dbad4830a9c0822891280ece4de2f63ad1a752e09b4f2105d754a79bf30da67",
+          "4cb0d3d5b2fa78369a024c33e0538355fa3984286ea3463fdea13f2f69e3a750",
+          "5abd185645291702024ec17b1f03b6435dae8484de97700baa2eb7153e014484",
+          "6921fdf1b7fc9e4bd5de3d6478227eec3e535410c0240a005387aa09eb4b78c6"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 44.38,
+        "top_5_docs": [
+          "39b8589d1c3f8f40dfedf820659f4f3009255f521f9308f5463883d4da1cf617",
+          "064534aef7fc06763991fb049d8f047068b0c321adaf3409435c9443730c98e1",
+          "4f4e163a3b09218954cbe900709bdb5e25c79f6a5644423d1378711df48468ef",
+          "358fc8f06b6b76a984463d726e396f8c6049b75590e99c67af42b32f1ae3df09",
+          "afb515da7b3ece5ab34e772cc7fdbc61773040af7e9b7d092ee5025f2944281d"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "latency_improvement_pct": -7019.5
+    },
+    {
+      "query": "javascrpt",
+      "query_type": "fuzzy",
+      "tfidf": {
+        "result_count": 1,
+        "latency_ms": 0.34,
+        "top_5_docs": [
+          "9df1b3d805218567e3b12b379b8cd006a04a806f00e13d44f4ea6dd5723ddb89"
+        ]
+      },
+      "lucene": {
+        "result_count": 20,
+        "latency_ms": 26.98,
+        "top_5_docs": [
+          "34f5e06d1d8724190e8d1512c2f7f4a8e392d2dcb09879fc7e230bb4f13edb10",
+          "e999ed6f90998c4116cefdd2c28d7f47f2c60d9b5c04957c15f2d8816b12c8f3",
+          "443d2f03bfe2fdd1f4135da51514205ef80dcdcec1b64a47500c8edff305ff0d",
+          "f619dc99a97e24eb2c039509a85d1c9f837cfbc5ba3141cc69663e1225438cc0",
+          "4ca3a023fc84db51384770718840949adb0b1f60529d543bd4124ce37de61a76"
+        ]
+      },
+      "overlap_at_k": {
+        "5": 0.0,
+        "10": 0.0,
+        "20": 0.0
+      },
+      "latency_improvement_pct": -7903.0
+    }
+  ],
+  "generated_at": "2025-11-28T21:29:34.022760"
+}

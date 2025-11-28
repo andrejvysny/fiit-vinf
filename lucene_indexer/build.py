@@ -40,6 +40,13 @@ except ImportError:
 
 from .schema import IndexSchema, FieldType, FIELD_DEFINITIONS
 
+# Import stats module if available
+try:
+    from spark.lib.stats import PipelineStats, save_pipeline_summary
+    STATS_AVAILABLE = True
+except ImportError:
+    STATS_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -391,10 +398,57 @@ class LuceneIndexBuilder:
 
         self.stats['end_time'] = datetime.now().isoformat()
 
+        # Calculate duration
+        start_dt = datetime.fromisoformat(self.stats['start_time'])
+        end_dt = datetime.fromisoformat(self.stats['end_time'])
+        self.stats['duration_seconds'] = round((end_dt - start_dt).total_seconds(), 2)
+
         # Write manifest
         self._write_manifest()
 
+        # Save pipeline stats if available
+        self._save_pipeline_stats()
+
         return self.stats
+
+    def _save_pipeline_stats(self):
+        """Save stats to the unified stats directory."""
+        if not STATS_AVAILABLE:
+            logger.info("Stats module not available, skipping pipeline stats")
+            return
+
+        try:
+            pipeline_stats = PipelineStats("lucene_index")
+            pipeline_stats.set_config(
+                text_dir=str(self.text_dir),
+                output_dir=str(self.output_dir),
+                entities_path=str(self.entities_path) if self.entities_path else None,
+                wiki_join_path=str(self.wiki_join_path) if self.wiki_join_path else None,
+            )
+            pipeline_stats.set_inputs(
+                text_dir=str(self.text_dir),
+                entities_file=str(self.entities_path) if self.entities_path else None,
+                wiki_join_file=str(self.wiki_join_path) if self.wiki_join_path else None,
+                total_items=self.stats['docs_indexed'],
+            )
+            pipeline_stats.set_outputs(
+                index_dir=str(self.output_dir),
+                docs_indexed=self.stats['docs_indexed'],
+                docs_with_entities=self.stats['docs_with_entities'],
+                docs_with_wiki=self.stats['docs_with_wiki'],
+            )
+            pipeline_stats.set_nested("index_stats", "total_entities", self.stats['total_entities'])
+            pipeline_stats.set_nested("index_stats", "total_wiki_matches", self.stats['total_wiki_matches'])
+            pipeline_stats.set_nested("performance", "docs_per_second",
+                round(self.stats['docs_indexed'] / max(self.stats.get('duration_seconds', 1), 0.01), 2))
+            pipeline_stats.finalize("completed")
+            stats_path = pipeline_stats.save()
+            logger.info(f"Stats saved to: {stats_path}")
+
+            # Also regenerate pipeline summary
+            save_pipeline_summary()
+        except Exception as e:
+            logger.warning(f"Failed to save pipeline stats: {e}")
 
     def _write_manifest(self):
         """Write index manifest with metadata."""

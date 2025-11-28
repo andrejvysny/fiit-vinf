@@ -15,6 +15,7 @@ set -euo pipefail
 #   lucene-search - Search the Lucene index
 #   lucene-compare- Compare TF-IDF vs Lucene results
 #   pipeline      - Run full pipeline (extract → wiki → join → lucene-build)
+#   stats         - Show pipeline statistics
 #
 # Usage:
 #   bin/cli <subcommand> [options]
@@ -77,6 +78,7 @@ Subcommands:
   lucene-search  Search the Lucene index
   lucene-compare Compare TF-IDF vs Lucene search results
   pipeline       Run full pipeline automatically
+  stats          Show pipeline statistics and generate reports
 
 Global Options:
   -h, --help     Show help for main CLI or subcommand
@@ -799,6 +801,197 @@ EOF
 }
 
 # =============================================================================
+# Subcommand: stats
+# =============================================================================
+
+cmd_stats() {
+    local SHOW_HELP=false
+    local OUTPUT_FORMAT="text"
+    local REGENERATE=false
+    local STATS_DIR="${PROJECT_ROOT}/stats"
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                SHOW_HELP=true
+                shift
+                ;;
+            --json)
+                OUTPUT_FORMAT="json"
+                shift
+                ;;
+            --markdown|--md)
+                OUTPUT_FORMAT="markdown"
+                shift
+                ;;
+            --regenerate|-r)
+                REGENERATE=true
+                shift
+                ;;
+            --dir|-d)
+                STATS_DIR="$2"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    if [[ "$SHOW_HELP" == "true" ]]; then
+        cat <<EOF
+Show pipeline statistics and generate reports.
+
+Usage: bin/cli stats [options]
+
+Options:
+  --json            Output as JSON
+  --markdown, --md  Output as Markdown
+  -r, --regenerate  Regenerate summary from individual stats
+  -d, --dir PATH    Stats directory (default: ./stats)
+  -h, --help        Show this help
+
+Stats Files:
+  stats/wiki_extraction.json     Wikipedia extraction stats
+  stats/html_extraction.json     HTML extraction stats
+  stats/join.json                Entity-Wiki join stats
+  stats/pipeline_summary.json    Overall pipeline summary
+  stats/pipeline_summary.md      Human-readable report
+
+Examples:
+  bin/cli stats                  # Show all stats
+  bin/cli stats --json           # Output as JSON
+  bin/cli stats --markdown       # Output as Markdown report
+  bin/cli stats --regenerate     # Regenerate summary
+EOF
+        return 0
+    fi
+
+    print_header "Pipeline Statistics"
+
+    # Check if stats directory exists
+    if [[ ! -d "${STATS_DIR}" ]]; then
+        print_warning "Stats directory not found: ${STATS_DIR}"
+        echo "Run the pipeline first to generate statistics."
+        return 1
+    fi
+
+    # If regenerate flag is set, run Python to regenerate summary
+    if [[ "$REGENERATE" == "true" ]]; then
+        print_warning "Regenerating pipeline summary..."
+        cd "${PROJECT_ROOT}"
+        python3 -c "
+from spark.lib.stats import save_pipeline_summary
+from pathlib import Path
+json_path, md_path = save_pipeline_summary(Path('${STATS_DIR}'))
+print(f'Generated: {json_path}')
+print(f'Generated: {md_path}')
+"
+        echo ""
+    fi
+
+    # Output based on format
+    case "${OUTPUT_FORMAT}" in
+        json)
+            if [[ -f "${STATS_DIR}/pipeline_summary.json" ]]; then
+                cat "${STATS_DIR}/pipeline_summary.json"
+            else
+                print_error "No pipeline summary found. Run --regenerate first."
+                return 1
+            fi
+            ;;
+        markdown)
+            if [[ -f "${STATS_DIR}/pipeline_summary.md" ]]; then
+                cat "${STATS_DIR}/pipeline_summary.md"
+            else
+                print_error "No Markdown report found. Run --regenerate first."
+                return 1
+            fi
+            ;;
+        text)
+            # Display summary from individual stats files
+            echo ""
+
+            # Wiki extraction stats
+            if [[ -f "${STATS_DIR}/wiki_extraction.json" ]]; then
+                echo -e "${GREEN}Wiki Extraction:${NC}"
+                python3 -c "
+import json
+with open('${STATS_DIR}/wiki_extraction.json') as f:
+    s = json.load(f)
+    print(f\"  Status: {s.get('status', 'N/A')}\")
+    print(f\"  Duration: {s.get('duration_seconds', 0):.2f}s\")
+    entities = s.get('entities', {})
+    print(f\"  Pages: {entities.get('pages', {}).get('count', 0):,}\")
+    print(f\"  Categories: {entities.get('categories', {}).get('count', 0):,}\")
+    print(f\"  Links: {entities.get('links', {}).get('count', 0):,}\")
+    print(f\"  Infobox Fields: {entities.get('infobox', {}).get('count', 0):,}\")
+    print(f\"  Abstracts: {entities.get('abstracts', {}).get('count', 0):,}\")
+"
+                echo ""
+            fi
+
+            # HTML extraction stats
+            if [[ -f "${STATS_DIR}/html_extraction.json" ]]; then
+                echo -e "${GREEN}HTML Extraction:${NC}"
+                python3 -c "
+import json
+with open('${STATS_DIR}/html_extraction.json') as f:
+    s = json.load(f)
+    print(f\"  Status: {s.get('status', 'N/A')}\")
+    print(f\"  Duration: {s.get('duration_seconds', 0):.2f}s\")
+    inputs = s.get('inputs', {})
+    outputs = s.get('outputs', {})
+    print(f\"  Files Processed: {inputs.get('total_files', 0):,}\")
+    print(f\"  Text Files Written: {outputs.get('text_files_written', 0):,}\")
+    print(f\"  Entities Extracted: {outputs.get('entities_written', 0):,}\")
+"
+                echo ""
+            fi
+
+            # Join stats
+            if [[ -f "${STATS_DIR}/join.json" ]]; then
+                echo -e "${GREEN}Entity-Wiki Join:${NC}"
+                python3 -c "
+import json
+with open('${STATS_DIR}/join.json') as f:
+    s = json.load(f)
+    print(f\"  Status: {s.get('status', 'N/A')}\")
+    print(f\"  Duration: {s.get('duration_seconds', 0):.2f}s\")
+    js = s.get('join_statistics', {})
+    print(f\"  Total Entities: {js.get('total_entities', 0):,}\")
+    print(f\"  Matched Entities: {js.get('matched_entities', 0):,}\")
+    print(f\"  Match Rate: {js.get('match_rate', 0):.2f}%\")
+    print(f\"  Unique Wiki Pages: {js.get('unique_wiki_pages_joined', 0):,}\")
+"
+                echo ""
+            fi
+
+            # Overall summary
+            if [[ -f "${STATS_DIR}/pipeline_summary.json" ]]; then
+                echo -e "${BLUE}─────────────────────────────────────${NC}"
+                echo -e "${BLUE}Pipeline Summary:${NC}"
+                python3 -c "
+import json
+with open('${STATS_DIR}/pipeline_summary.json') as f:
+    s = json.load(f)
+    totals = s.get('totals', {})
+    print(f\"  Overall Status: {totals.get('overall_status', 'N/A')}\")
+    print(f\"  Total Duration: {totals.get('total_duration_seconds', 0):.2f}s\")
+    print(f\"  Wiki Pages: {totals.get('total_wiki_pages', 0):,}\")
+    print(f\"  HTML Files: {totals.get('total_html_files', 0):,}\")
+    print(f\"  Entities Extracted: {totals.get('total_entities_extracted', 0):,}\")
+    print(f\"  Total Joins: {totals.get('total_joins', 0):,}\")
+"
+            else
+                print_warning "No pipeline summary found. Run 'bin/cli stats --regenerate' to generate."
+            fi
+            ;;
+    esac
+}
+
+# =============================================================================
 # Subcommand: pipeline
 # =============================================================================
 
@@ -966,6 +1159,9 @@ main() {
             ;;
         pipeline)
             cmd_pipeline "$@"
+            ;;
+        stats)
+            cmd_stats "$@"
             ;;
         -h|--help)
             show_main_help

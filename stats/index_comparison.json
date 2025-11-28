@@ -1,0 +1,57 @@
+{
+  "stage": "index_comparison",
+  "run_id": "20251128_212930",
+  "start_time": "2025-11-28T21:29:30.655463",
+  "end_time": "2025-11-28T21:29:34.024078",
+  "duration_seconds": 3.37,
+  "status": "completed",
+  "config": {
+    "tfidf_index": "/opt/app/workspace/store/index/default",
+    "lucene_index": "/opt/app/workspace/store/lucene_index",
+    "queries_file": "/opt/app/queries.txt",
+    "top_k": 20
+  },
+  "inputs": {
+    "total_queries": 14,
+    "query_types": [
+      "simple",
+      "phrase",
+      "boolean",
+      "fuzzy"
+    ]
+  },
+  "outputs": {
+    "queries_compared": 14,
+    "valid_comparisons": 14,
+    "report_path": "/opt/app/reports/index_comparison.md"
+  },
+  "entities": {},
+  "performance": {},
+  "errors": [],
+  "comparison_metrics": {
+    "avg_tfidf_latency_ms": 27.8,
+    "avg_lucene_latency_ms": 40.9,
+    "latency_improvement_pct": -47.1,
+    "avg_overlap_at_5": 1.4,
+    "avg_overlap_at_10": 5.7,
+    "avg_overlap_at_20": 14.6
+  },
+  "query_types": {
+    "simple": {
+      "count": 5,
+      "avg_overlap_at_20": 16.0
+    },
+    "boolean": {
+      "count": 3,
+      "avg_overlap_at_20": 26.7
+    },
+    "phrase": {
+      "count": 3,
+      "avg_overlap_at_20": 15.0
+    },
+    "fuzzy": {
+      "count": 3,
+      "avg_overlap_at_20": 0.0
+    }
+  }
+}

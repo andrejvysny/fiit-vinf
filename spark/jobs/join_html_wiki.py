@@ -36,6 +36,7 @@ sys.path.insert(0, '/opt/app')
 from spark.lib.wiki_regexes import normalize_title
 from spark.lib.io import read_tsv, write_tsv, write_ndjson
 from spark.lib.utils import StructuredLogger, write_manifest
+from spark.lib.stats import PipelineStats, save_pipeline_summary
 
 
 def parse_args() -> argparse.Namespace:
@@ -584,6 +585,48 @@ def main() -> int:
         runs_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = runs_dir / 'manifest.json'
         write_manifest(manifest_path, manifest)
+
+        # Save pipeline stats
+        pipeline_stats = PipelineStats("join")
+        pipeline_stats.set_config(
+            partitions=args.partitions,
+            entities_max_rows=args.entities_max_rows
+        )
+        pipeline_stats.set_inputs(
+            entities_file=str(entities_path),
+            wiki_dir=str(wiki_dir),
+            entity_count=entity_count,
+            total_items=entity_count
+        )
+        pipeline_stats.set_outputs(
+            join_file=str(output_dir / "html_wiki.tsv"),
+            stats_file=str(output_dir / "join_stats.json"),
+            aggregates_file=str(output_dir / "html_wiki_agg.tsv")
+        )
+        pipeline_stats.set_nested("join_statistics", "total_entities", stats['total_entities'])
+        pipeline_stats.set_nested("join_statistics", "matched_entities", stats['matched_entities'])
+        pipeline_stats.set_nested("join_statistics", "match_rate", stats['match_rate'])
+        pipeline_stats.set_nested("join_statistics", "unique_wiki_pages_joined", stats['unique_wiki_pages_joined'])
+        pipeline_stats.set_nested("join_statistics", "unique_docs_with_wiki", stats['unique_docs_with_wiki'])
+
+        # Add entity type breakdown
+        for entity_type, type_stat in stats['by_type'].items():
+            pipeline_stats.set_entities(entity_type, type_stat['total'],
+                                       matched=type_stat['matched'],
+                                       unique_pages=type_stat['unique_pages'],
+                                       match_rate=type_stat['rate'])
+
+        pipeline_stats.set_nested("performance", "entities_per_second",
+                                  round(stats['total_entities'] / duration, 2) if duration > 0 else 0)
+        pipeline_stats.finalize("completed")
+        stats_path = pipeline_stats.save()
+        logger.info(f"Stats saved to: {stats_path}")
+
+        # Generate pipeline summary
+        try:
+            save_pipeline_summary()
+        except Exception as e:
+            logger.warning(f"Failed to generate pipeline summary: {e}")
 
         # Log completion
         struct_logger.log("complete", duration=duration, stats=stats)

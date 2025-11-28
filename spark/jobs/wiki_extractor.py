@@ -48,6 +48,7 @@ from spark.lib.wiki_regexes import (
     clean_wikitext_to_plaintext,
 )
 from spark.lib.io import write_tsv, write_ndjson
+from spark.lib.stats import PipelineStats, save_pipeline_summary
 from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
 
 
@@ -104,6 +105,12 @@ def parse_args() -> argparse.Namespace:
         action='store_true',
         help='Disable full text extraction'
     )
+    parser.add_argument(
+        '--sample-threshold',
+        type=int,
+        default=1000,
+        help='Use Python native reading for samples below this threshold (default: 1000)'
+    )
     return parser.parse_args()
 
 
@@ -124,6 +131,282 @@ def find_wiki_dumps(input_dir: Path, prefer_uncompressed: bool = True) -> List[P
     dump_files.sort(key=lambda f: f.stat().st_size)
 
     return dump_files
+
+
+def extract_pages_native(dump_path: Path, max_pages: int, logger: logging.Logger) -> List[str]:
+    """
+    Extract pages from Wikipedia dump using native Python file reading.
+
+    This is much faster than Spark for small samples because it:
+    1. Reads the file sequentially (no shuffle/repartition)
+    2. Stops as soon as max_pages is reached
+    3. Doesn't load the entire file into memory
+
+    Args:
+        dump_path: Path to Wikipedia XML dump file
+        max_pages: Maximum number of pages to extract
+        logger: Logger instance
+
+    Returns:
+        List of page XML strings
+    """
+    import bz2
+
+    pages = []
+    buffer = []
+    in_page = False
+    max_buffer_lines = 50000
+
+    logger.info(f"Reading {max_pages} pages using native Python (fast mode)...")
+
+    # Open file (handle bz2 compression)
+    if dump_path.suffix == '.bz2':
+        file_handle = bz2.open(dump_path, 'rt', encoding='utf-8')
+    else:
+        file_handle = open(dump_path, 'r', encoding='utf-8')
+
+    try:
+        for line in file_handle:
+            if '<page>' in line:
+                in_page = True
+                buffer = [line]
+            elif in_page:
+                buffer.append(line)
+
+                if len(buffer) > max_buffer_lines:
+                    # Page too large, skip it
+                    buffer = []
+                    in_page = False
+                    continue
+
+                if '</page>' in line:
+                    page_xml = ''.join(buffer)
+                    pages.append(page_xml)
+                    buffer = []
+                    in_page = False
+
+                    if len(pages) % 100 == 0:
+                        logger.info(f"Extracted {len(pages)}/{max_pages} pages...")
+
+                    if len(pages) >= max_pages:
+                        break
+    finally:
+        file_handle.close()
+
+    logger.info(f"Extracted {len(pages)} pages using native Python")
+    return pages
+
+
+def process_pages_native(
+    pages: List[str],
+    output_dir: Path,
+    extract_full_text: bool,
+    logger: logging.Logger
+) -> dict:
+    """
+    Process extracted pages using pure Python/pandas (no Spark).
+
+    This is used for small sample sizes where Spark overhead is not justified.
+
+    Args:
+        pages: List of page XML strings
+        output_dir: Output directory for TSV files
+        extract_full_text: Whether to extract full article text
+        logger: Logger instance
+
+    Returns:
+        Dictionary with statistics
+    """
+    import hashlib
+
+    # Initialize data lists
+    pages_data = []
+    categories_data = []
+    links_data = []
+    infobox_data = []
+    abstracts_data = []
+    aliases_data = []
+    text_data = []
+
+    logger.info(f"Processing {len(pages)} pages with Python...")
+
+    for i, page_xml in enumerate(pages):
+        # Extract core fields
+        parsed = extract_page_xml(page_xml)
+        if not parsed:
+            continue
+
+        page_id = parsed['page_id']
+        title = parsed['title']
+        norm_title = normalize_title(title)
+        ns = parsed['namespace']
+        redirect_to = parsed['redirect_to']
+        timestamp = parsed['timestamp']
+        text = parsed['text']
+
+        # Filter to main namespace (ns=0) or redirects
+        if ns != 0 and redirect_to is None:
+            continue
+
+        # Pages metadata
+        pages_data.append({
+            'page_id': page_id,
+            'title': title,
+            'norm_title': norm_title,
+            'ns': ns,
+            'redirect_to': redirect_to or '',
+            'timestamp': timestamp or ''
+        })
+
+        # Skip content extraction for redirects
+        if redirect_to:
+            aliases_data.append({
+                'alias_norm_title': norm_title,
+                'canonical_norm_title': normalize_title(redirect_to)
+            })
+            continue
+
+        if not text:
+            continue
+
+        # Categories
+        for category in extract_categories(text):
+            categories_data.append({
+                'page_id': page_id,
+                'category': category,
+                'norm_category': normalize_title(category)
+            })
+
+        # Links
+        for link in extract_internal_links(text):
+            links_data.append({
+                'page_id': page_id,
+                'link_title': link,
+                'norm_link_title': normalize_title(link)
+            })
+
+        # Infobox
+        infobox = extract_infobox_fields(text)
+        for key, value in infobox.items():
+            infobox_data.append({
+                'page_id': page_id,
+                'key': key,
+                'value': value
+            })
+
+        # Abstract
+        abstract = extract_abstract(text)
+        if abstract:
+            abstracts_data.append({
+                'page_id': page_id,
+                'abstract_text': abstract
+            })
+
+        # Full text
+        if extract_full_text:
+            plain_text = clean_wikitext_to_plaintext(text)
+            if plain_text:
+                content_sha256 = hashlib.sha256(plain_text.encode('utf-8')).hexdigest()
+                text_data.append({
+                    'page_id': page_id,
+                    'title': title,
+                    'content_sha256': content_sha256,
+                    'content_length': len(plain_text),
+                    'timestamp': timestamp or '',
+                    'plain_text': plain_text
+                })
+
+        if (i + 1) % 100 == 0:
+            logger.info(f"Processed {i + 1}/{len(pages)} pages...")
+
+    logger.info("Writing output files...")
+
+    # Write TSV files using pandas
+    def write_tsv_pandas(data: List[dict], path: Path, columns: List[str]):
+        df = pd.DataFrame(data)
+        if df.empty:
+            # Create empty file with headers
+            df = pd.DataFrame(columns=columns)
+        df = df[columns]  # Ensure column order
+        df.to_csv(path, sep='\t', index=False, encoding='utf-8')
+
+    # Pages
+    pages_path = output_dir / "pages.tsv"
+    write_tsv_pandas(pages_data, pages_path,
+                     ['page_id', 'title', 'norm_title', 'ns', 'redirect_to', 'timestamp'])
+    logger.info(f"Wrote {len(pages_data)} pages to {pages_path}")
+
+    # Categories
+    categories_path = output_dir / "categories.tsv"
+    write_tsv_pandas(categories_data, categories_path,
+                     ['page_id', 'category', 'norm_category'])
+    logger.info(f"Wrote {len(categories_data)} categories")
+
+    # Links
+    links_path = output_dir / "links.tsv"
+    write_tsv_pandas(links_data, links_path,
+                     ['page_id', 'link_title', 'norm_link_title'])
+    logger.info(f"Wrote {len(links_data)} links")
+
+    # Infobox
+    infobox_path = output_dir / "infobox.tsv"
+    write_tsv_pandas(infobox_data, infobox_path,
+                     ['page_id', 'key', 'value'])
+    logger.info(f"Wrote {len(infobox_data)} infobox fields")
+
+    # Abstracts
+    abstracts_path = output_dir / "abstract.tsv"
+    write_tsv_pandas(abstracts_data, abstracts_path,
+                     ['page_id', 'abstract_text'])
+    logger.info(f"Wrote {len(abstracts_data)} abstracts")
+
+    # Aliases
+    aliases_path = output_dir / "aliases.tsv"
+    write_tsv_pandas(aliases_data, aliases_path,
+                     ['alias_norm_title', 'canonical_norm_title'])
+    logger.info(f"Wrote {len(aliases_data)} aliases")
+
+    # Full text (if enabled)
+    text_files_written = 0
+    if extract_full_text and text_data:
+        text_dir = output_dir / "text"
+        text_dir.mkdir(parents=True, exist_ok=True)
+
+        # Deduplicate by SHA256
+        seen_hashes = set()
+        unique_texts = []
+        for item in text_data:
+            if item['content_sha256'] not in seen_hashes:
+                seen_hashes.add(item['content_sha256'])
+                unique_texts.append(item)
+
+        # Write text files
+        for item in unique_texts:
+            file_path = text_dir / f"{item['content_sha256']}.txt"
+            if not file_path.exists():
+                file_path.write_text(item['plain_text'], encoding='utf-8')
+                text_files_written += 1
+
+        logger.info(f"Wrote {text_files_written} text files")
+
+        # Write metadata
+        text_metadata_path = output_dir / "wiki_text_metadata.tsv"
+        metadata_items = [{k: v for k, v in item.items() if k != 'plain_text'} for item in text_data]
+        write_tsv_pandas(metadata_items, text_metadata_path,
+                         ['page_id', 'title', 'content_sha256', 'content_length', 'timestamp'])
+        logger.info(f"Wrote text metadata")
+
+    return {
+        'pages': len(pages_data),
+        'categories': len(categories_data),
+        'links': len(links_data),
+        'infobox': len(infobox_data),
+        'abstracts': len(abstracts_data),
+        'aliases': len(aliases_data),
+        'text_files_written': text_files_written,
+        'text_pages': len(text_data),
+        'unique_texts': len(set(item['content_sha256'] for item in text_data)) if text_data else 0
+    }
 
 
 def extract_pages_from_lines_pandas(
@@ -431,6 +714,125 @@ def main() -> int:
             print(f)
         return 0
 
+    # Determine if text extraction is enabled
+    extract_text = args.extract_text and not args.no_text
+
+    # Use native Python for small samples (much faster than Spark for small data)
+    use_native = (args.wiki_max_pages is not None and
+                  args.wiki_max_pages <= args.sample_threshold)
+
+    if use_native:
+        logger.info("=" * 60)
+        logger.info(f"USING NATIVE PYTHON MODE (sample <= {args.sample_threshold})")
+        logger.info("This is much faster than Spark for small samples")
+        logger.info("=" * 60)
+
+        # Initialize pipeline stats
+        pipeline_stats = PipelineStats("wiki_extraction")
+        pipeline_stats.set_config(
+            mode="native",
+            max_pages=args.wiki_max_pages,
+            partitions=args.partitions,
+            text_extraction=extract_text
+        )
+        pipeline_stats.set_inputs(
+            input_file=str(dump_file),
+            input_size_gb=round(dump_file.stat().st_size / 1e9, 2),
+            total_items=args.wiki_max_pages
+        )
+
+        try:
+            # Extract pages using native Python (stops as soon as max_pages reached)
+            pages = extract_pages_native(dump_file, args.wiki_max_pages, logger)
+
+            # Process and write outputs using pandas
+            stats = process_pages_native(pages, output_dir, extract_text, logger)
+
+            # Generate manifest
+            duration = time.time() - start_time
+            manifest = {
+                "timestamp": datetime.now().isoformat(),
+                "duration_seconds": round(duration, 2),
+                "api": "Native Python",
+                "input": str(dump_file),
+                "input_size_gb": round(dump_file.stat().st_size / 1e9, 2),
+                "max_pages": args.wiki_max_pages,
+                "outputs": {
+                    "pages": str(output_dir / "pages.tsv"),
+                    "categories": str(output_dir / "categories.tsv"),
+                    "links": str(output_dir / "links.tsv"),
+                    "infobox": str(output_dir / "infobox.tsv"),
+                    "abstracts": str(output_dir / "abstract.tsv"),
+                    "aliases": str(output_dir / "aliases.tsv"),
+                },
+                "stats": stats,
+                "features": {
+                    "text_extraction": extract_text
+                }
+            }
+
+            if extract_text:
+                manifest["outputs"]["text_metadata"] = str(output_dir / "wiki_text_metadata.tsv")
+                manifest["outputs"]["text_directory"] = str(output_dir / "text")
+
+            runs_dir = Path('runs') / datetime.now().strftime('%Y%m%d_%H%M%S')
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = runs_dir / 'manifest.json'
+            write_manifest(manifest_path, manifest)
+
+            struct_logger.log("complete", duration=duration, stats=stats, mode="native")
+
+            # Save pipeline stats
+            pipeline_stats.set_outputs(
+                pages_file=str(output_dir / "pages.tsv"),
+                categories_file=str(output_dir / "categories.tsv"),
+                links_file=str(output_dir / "links.tsv"),
+                infobox_file=str(output_dir / "infobox.tsv"),
+                abstracts_file=str(output_dir / "abstract.tsv"),
+                aliases_file=str(output_dir / "aliases.tsv")
+            )
+            pipeline_stats.set_entities("pages", stats.get('pages', 0))
+            pipeline_stats.set_entities("categories", stats.get('categories', 0))
+            pipeline_stats.set_entities("links", stats.get('links', 0))
+            pipeline_stats.set_entities("infobox", stats.get('infobox', 0))
+            pipeline_stats.set_entities("abstracts", stats.get('abstracts', 0))
+            pipeline_stats.set_entities("aliases", stats.get('aliases', 0))
+            pipeline_stats.set_entities("text_files", stats.get('text_files_written', 0))
+            pipeline_stats.set_nested("performance", "pages_per_second",
+                                      round(stats.get('pages', 0) / duration, 2) if duration > 0 else 0)
+            pipeline_stats.finalize("completed")
+            stats_path = pipeline_stats.save()
+            logger.info(f"Stats saved to: {stats_path}")
+
+            # Generate pipeline summary
+            try:
+                save_pipeline_summary()
+            except Exception as e:
+                logger.warning(f"Failed to generate pipeline summary: {e}")
+
+            # Print summary
+            logger.info("=" * 60)
+            logger.info("WIKIPEDIA EXTRACTION COMPLETE (Native Python)")
+            logger.info(f"Duration: {duration:.2f} seconds")
+            logger.info(f"Pages processed: {stats.get('pages', 'unknown')}")
+            logger.info(f"Manifest: {manifest_path}")
+            logger.info("=" * 60)
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Native extraction failed: {e}")
+            struct_logger.log("error", message=str(e), mode="native")
+            pipeline_stats.add_error(str(e), "native_extraction")
+            pipeline_stats.finalize("error")
+            pipeline_stats.save()
+            raise
+        finally:
+            struct_logger.close()
+
+    # Use Spark for large extractions
+    logger.info("Using Spark DataFrame API for extraction")
+
     # Create Spark session with DataFrame-optimized configuration
     spark_builder = SparkSession.builder \
         .appName("WikiExtractor-DataFrame") \
@@ -476,9 +878,6 @@ def main() -> int:
             # Force materialization of cache
             cached_count = pages_df.count()
             logger.info(f"Cached {cached_count} pages in memory")
-
-        # Determine if text extraction is enabled
-        extract_text = args.extract_text and not args.no_text
 
         # Process pages using DataFrame operations
         logger.info("Extracting structured data (DataFrame API)...")

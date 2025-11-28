@@ -1,0 +1,28 @@
+{
+  "timestamp": "2025-11-28T17:23:15.212510",
+  "duration_seconds": 30.36,
+  "api": "DataFrame",
+  "inputs": {
+    "entities": "/opt/app/workspace/store/spark/entities/entities.tsv",
+    "wiki_dir": "/opt/app/workspace/store/wiki",
+    "entity_count": 0,
+    "entities_max_rows": null
+  },
+  "outputs": {
+    "join": "/opt/app/workspace/store/join/html_wiki.tsv",
+    "stats": "/opt/app/workspace/store/join/join_stats.json",
+    "aggregates": "/opt/app/workspace/store/join/html_wiki_agg.tsv"
+  },
+  "statistics": {
+    "total_entities": 0,
+    "matched_entities": 0,
+    "match_rate": 0,
+    "unique_wiki_pages_joined": 0,
+    "unique_docs_with_wiki": 0,
+    "by_type": {}
+  },
+  "spark_config": {
+    "driver_memory": "6g",
+    "partitions": 64
+  }
+}

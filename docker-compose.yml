@@ -60,6 +60,7 @@ services:
       - ./config_loader.py:/opt/app/config_loader.py:ro
       - ./logs:/opt/app/logs
       - ./runs:/opt/app/runs
+      - ./stats:/opt/app/stats
       - spark_checkpoints:/tmp/spark_checkpoints
     command:
       - bash
@@ -115,6 +116,7 @@ services:
       - ./config_loader.py:/opt/app/config_loader.py:ro
       - ./logs:/opt/app/logs
       - ./runs:/opt/app/runs
+      - ./stats:/opt/app/stats
       - spark_checkpoints:/tmp/spark_checkpoints
     command:
       - bash
@@ -179,6 +181,7 @@ services:
       - ./config_loader.py:/opt/app/config_loader.py:ro
       - ./logs:/opt/app/logs
       - ./runs:/opt/app/runs
+      - ./stats:/opt/app/stats
       - spark_checkpoints:/tmp/spark_checkpoints
     command:
       - bash
@@ -264,8 +267,11 @@ services:
       - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index
       - ./lucene_indexer:/opt/app/lucene_indexer:ro
       - ./indexer:/opt/app/indexer:ro
+      - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./stats:/opt/app/stats
+      - ./reports:/opt/app/reports
     command:
       - python
       - -m
@@ -300,8 +306,11 @@ services:
       - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index:ro
       - ./lucene_indexer:/opt/app/lucene_indexer:ro
       - ./indexer:/opt/app/indexer:ro
+      - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./config_loader.py:/opt/app/config_loader.py:ro
+      - ./stats:/opt/app/stats
+      - ./reports:/opt/app/reports
     command:
       - bash
       - -c
@@ -326,9 +335,11 @@ services:
       - ./workspace/store/index:/opt/app/workspace/store/index:ro
       - ./lucene_indexer:/opt/app/lucene_indexer:ro
       - ./indexer:/opt/app/indexer:ro
+      - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./config_loader.py:/opt/app/config_loader.py:ro
       - ./queries.txt:/opt/app/queries.txt:ro
+      - ./stats:/opt/app/stats
       - ./reports:/opt/app/reports
     command:
       - python
@@ -337,11 +348,12 @@ services:
       - --queries-file
       - /opt/app/queries.txt
       - --tfidf-index
-      - /opt/app/workspace/store/index
+      - /opt/app/workspace/store/index/default
       - --lucene-index
       - /opt/app/workspace/store/lucene_index
       - --output
       - /opt/app/reports/index_comparison.md
+      - --json
     user: "0:0"
     networks:
       - vinf-net

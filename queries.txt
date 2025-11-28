@@ -1,0 +1,25 @@
+# VINF Search Comparison Queries
+# Format: search_type|query_text
+# Search types: simple, boolean, phrase, fuzzy
+
+# Simple keyword searches
+simple|python web
+simple|machine learning
+simple|docker container
+simple|javascript framework
+simple|database optimization
+
+# Boolean searches
+boolean|python AND docker
+boolean|web OR api
+boolean|machine AND learning AND neural
+
+# Phrase searches
+phrase|machine learning
+phrase|web application
+phrase|open source
+
+# Fuzzy searches (with typos)
+fuzzy|pyhton
+fuzzy|machin lerning
+fuzzy|javascrpt

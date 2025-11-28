@@ -24,9 +24,41 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-# Try to import PyLucene
+# Try to import PyLucene (just check if it's available)
 try:
     import lucene
+    LUCENE_AVAILABLE = True
+except ImportError:
+    LUCENE_AVAILABLE = False
+
+# Java imports - will be done after JVM init
+JPaths = None
+StandardAnalyzer = None
+DirectoryReader = None
+Term = None
+QueryParser = None
+MultiFieldQueryParser = None
+IndexSearcher = None
+BooleanQuery = None
+BooleanClause = None
+TermQuery = None
+PhraseQuery = None
+FuzzyQuery = None
+MatchAllDocsQuery = None
+Sort = None
+SortField = None
+IntPoint = None
+LongPoint = None
+FSDirectory = None
+
+
+def _init_java_imports():
+    """Initialize Java imports after JVM is started."""
+    global JPaths, StandardAnalyzer, DirectoryReader, Term
+    global QueryParser, MultiFieldQueryParser, IndexSearcher
+    global BooleanQuery, BooleanClause, TermQuery, PhraseQuery, FuzzyQuery
+    global MatchAllDocsQuery, Sort, SortField, IntPoint, LongPoint, FSDirectory
+
     from java.nio.file import Paths as JPaths
     from org.apache.lucene.analysis.standard import StandardAnalyzer
     from org.apache.lucene.index import DirectoryReader, Term
@@ -36,11 +68,8 @@ try:
         TermQuery, PhraseQuery, FuzzyQuery,
         MatchAllDocsQuery, Sort, SortField
     )
-    from org.apache.lucene.search import IntPoint, LongPoint
+    from org.apache.lucene.document import IntPoint, LongPoint
     from org.apache.lucene.store import FSDirectory
-    LUCENE_AVAILABLE = True
-except ImportError:
-    LUCENE_AVAILABLE = False
 
 from .schema import IndexSchema, FieldType
 
@@ -149,6 +178,9 @@ class LuceneSearcher:
         else:
             lucene.getVMEnv().attachCurrentThread()
 
+        # Initialize Java imports after JVM is started
+        _init_java_imports()
+
         # Open index
         if not self.index_dir.exists():
             raise FileNotFoundError(f"Index directory not found: {self.index_dir}")
@@ -232,19 +264,20 @@ class LuceneSearcher:
 
         search_fields = fields or self.DEFAULT_SEARCH_FIELDS
 
-        # Create multi-field query parser with boosts
-        parser = MultiFieldQueryParser(
-            search_fields,
-            self.analyzer,
-        )
-
-        # Set default operator to OR for broader matching
-        parser.setDefaultOperator(QueryParser.Operator.OR)
-
         try:
-            query = parser.parse(query_text)
+            # Build a combined query across all fields
+            builder = BooleanQuery.Builder()
+
+            for field in search_fields:
+                parser = QueryParser(field, self.analyzer)
+                field_query = parser.parse(query_text)
+                builder.add(field_query, BooleanClause.Occur.SHOULD)
+
+            query = builder.build()
         except Exception as e:
             logger.warning(f"Query parse failed: {e}, using escaped query")
+            # Fallback to simple content search with escaped query
+            parser = QueryParser("content", self.analyzer)
             query = parser.parse(QueryParser.escape(query_text))
 
         return self._execute_search(query, top_k)
@@ -273,17 +306,17 @@ class LuceneSearcher:
         if not query_text.strip():
             return []
 
-        # Use QueryParser which supports AND/OR/NOT
-        parser = MultiFieldQueryParser(
-            self.DEFAULT_SEARCH_FIELDS,
-            self.analyzer,
-        )
-
-        # Set default to AND for boolean queries
-        parser.setDefaultOperator(QueryParser.Operator.AND)
-
         try:
-            query = parser.parse(query_text)
+            # Build a combined query across all fields with AND default
+            builder = BooleanQuery.Builder()
+
+            for field in self.DEFAULT_SEARCH_FIELDS:
+                parser = QueryParser(field, self.analyzer)
+                parser.setDefaultOperator(QueryParser.Operator.AND)
+                field_query = parser.parse(query_text)
+                builder.add(field_query, BooleanClause.Occur.SHOULD)
+
+            query = builder.build()
         except Exception as e:
             logger.warning(f"Boolean query parse failed: {e}")
             return []
@@ -450,12 +483,14 @@ class LuceneSearcher:
 
         # Text query (if provided)
         if text_query:
-            parser = MultiFieldQueryParser(
-                self.DEFAULT_SEARCH_FIELDS,
-                self.analyzer,
-            )
             try:
-                text_q = parser.parse(text_query)
+                # Build a combined query across all fields
+                text_builder = BooleanQuery.Builder()
+                for field in self.DEFAULT_SEARCH_FIELDS:
+                    parser = QueryParser(field, self.analyzer)
+                    field_query = parser.parse(text_query)
+                    text_builder.add(field_query, BooleanClause.Occur.SHOULD)
+                text_q = text_builder.build()
                 builder.add(text_q, BooleanClause.Occur.MUST)
             except Exception as e:
                 logger.warning(f"Text query parse failed: {e}")

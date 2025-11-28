@@ -37,6 +37,7 @@ from config_loader import load_yaml_config
 from extractor.config import ExtractorConfig
 from extractor.html_clean import html_to_text
 from extractor.entity_extractors import extract_all_entities
+from spark.lib.stats import PipelineStats, save_pipeline_summary
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -167,8 +168,12 @@ def process_html_files_pandas(
     text_path = Path(text_dir)
     text_path.mkdir(parents=True, exist_ok=True)
 
-    # Get partition ID for unique entity file naming
-    partition_id = os.getpid()  # Use PID as partition identifier
+    # Get unique partition ID for entity file naming
+    # In Spark local mode, all partitions share the same PID, so we need
+    # a combination of PID + thread ID + UUID to ensure uniqueness
+    import threading
+    import uuid
+    partition_id = f"{os.getpid()}_{threading.get_ident()}_{uuid.uuid4().hex[:8]}"
     entities_file = Path(entities_parts_dir) / f"part-{partition_id}.tsv"
 
     total_text_written = 0
@@ -442,6 +447,54 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         manifest_file = run_dir / 'manifest.json'
         manifest_file.write_text(json.dumps(manifest, indent=2))
+
+        # Save pipeline stats
+        pipeline_stats = PipelineStats("html_extraction")
+        pipeline_stats.set_config(
+            mode="spark_dataframe",
+            partitions=partitions,
+            force=args.force,
+            sample=args.sample
+        )
+        pipeline_stats.set_inputs(
+            input_dir=str(input_dir),
+            total_files=len(html_files),
+            total_items=len(html_files)
+        )
+        pipeline_stats.set_outputs(
+            text_files_written=stats['text_files_written'],
+            entities_written=stats['entities_written'],
+            errors=stats['errors'],
+            entities_dir=str(output_dir / 'entities'),
+            text_dir=str(output_dir / 'text') if hasattr(output_dir, '__truediv__') else str(Path(str(output_dir)) / 'text')
+        )
+
+        # Read entities file to get breakdown by type
+        entities_file = output_dir / 'entities' / 'entities.tsv'
+        if entities_file.exists():
+            try:
+                import pandas as pd
+                entities_df = pd.read_csv(entities_file, sep='\t', encoding='utf-8')
+                if 'type' in entities_df.columns:
+                    type_counts = entities_df['type'].value_counts().to_dict()
+                    for entity_type, count in type_counts.items():
+                        pipeline_stats.set_entities(entity_type, count)
+            except Exception as e:
+                logger.warning(f"Could not analyze entity types: {e}")
+
+        pipeline_stats.set_nested("performance", "files_per_second",
+                                  round(len(html_files) / duration, 2) if duration > 0 else 0)
+        pipeline_stats.set_nested("performance", "entities_per_second",
+                                  round(stats['entities_written'] / duration, 2) if duration > 0 else 0)
+        pipeline_stats.finalize("completed")
+        stats_path = pipeline_stats.save()
+        logger.info(f"Stats saved to: {stats_path}")
+
+        # Generate pipeline summary
+        try:
+            save_pipeline_summary()
+        except Exception as e:
+            logger.warning(f"Failed to generate pipeline summary: {e}")
 
         # Print summary
         logger.info("=" * 60)

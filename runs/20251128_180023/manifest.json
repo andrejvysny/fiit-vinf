@@ -1,0 +1,65 @@
+{
+  "timestamp": "2025-11-28T18:00:23.442869",
+  "duration_seconds": 29.12,
+  "api": "DataFrame",
+  "inputs": {
+    "entities": "/opt/app/workspace/store/spark/entities/entities.tsv",
+    "wiki_dir": "/opt/app/workspace/store/wiki",
+    "entity_count": 10130,
+    "entities_max_rows": null
+  },
+  "outputs": {
+    "join": "/opt/app/workspace/store/join/html_wiki.tsv",
+    "stats": "/opt/app/workspace/store/join/join_stats.json",
+    "aggregates": "/opt/app/workspace/store/join/html_wiki_agg.tsv"
+  },
+  "statistics": {
+    "total_entities": 12454,
+    "matched_entities": 7,
+    "match_rate": 0.06,
+    "unique_wiki_pages_joined": 6,
+    "unique_docs_with_wiki": 6,
+    "by_type": {
+      "TOPICS": {
+        "total": 2338,
+        "matched": 7,
+        "unique_pages": 6,
+        "rate": 0.3
+      },
+      "FORK_COUNT": {
+        "total": 13,
+        "matched": 0,
+        "unique_pages": 0,
+        "rate": 0.0
+      },
+      "STAR_COUNT": {
+        "total": 27,
+        "matched": 0,
+        "unique_pages": 0,
+        "rate": 0.0
+      },
+      "URL": {
+        "total": 9950,
+        "matched": 0,
+        "unique_pages": 0,
+        "rate": 0.0
+      },
+      "LICENSE": {
+        "total": 118,
+        "matched": 0,
+        "unique_pages": 0,
+        "rate": 0.0
+      },
+      "README": {
+        "total": 8,
+        "matched": 0,
+        "unique_pages": 0,
+        "rate": 0.0
+      }
+    }
+  },
+  "spark_config": {
+    "driver_memory": "6g",
+    "partitions": 64
+  }
+}
