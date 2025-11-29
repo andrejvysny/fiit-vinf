@@ -22,3 +22,7 @@
 {"ts": 1764352264.7717462, "event": "complete", "duration": 2.381645441055298, "stats": {"pages": 500, "categories": 3114, "links": 101493, "infobox": 2423, "abstracts": 267, "aliases": 177, "text_files_written": 0, "text_pages": 323, "unique_texts": 323}, "mode": "native"}
 {"ts": 1764352712.9898381, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 500}
 {"ts": 1764352715.392866, "event": "complete", "duration": 2.402477741241455, "stats": {"pages": 500, "categories": 3114, "links": 101493, "infobox": 2423, "abstracts": 267, "aliases": 177, "text_files_written": 0, "text_pages": 323, "unique_texts": 323}, "mode": "native"}
+{"ts": 1764370687.5237515, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1764372342.4885087, "event": "error", "message": "An error occurred while calling o157.count"}
+{"ts": 1764372455.0685787, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1764372501.123203, "event": "complete", "duration": 46.05126452445984, "stats": {"pages": 9913, "categories": 66318, "links": 1780735, "infobox": 53440, "abstracts": 6308, "aliases": 2446, "text_files_written": 7135, "text_pages": 7467, "unique_texts": 7467}, "mode": "native"}

@@ -29,6 +29,7 @@ from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
 from pyspark.sql.window import Window
+from pyspark import StorageLevel
 
 # Add project root to path
 sys.path.insert(0, '/opt/app')
@@ -94,38 +95,45 @@ def load_entities(spark: SparkSession, path: Path, max_rows: Optional[int] = Non
     return entities_df
 
 
-def load_wiki_data(spark: SparkSession, wiki_dir: Path) -> Dict[str, DataFrame]:
-    """Load Wikipedia TSV files."""
+def load_wiki_data(spark: SparkSession, wiki_dir: Path, logger) -> Dict[str, DataFrame]:
+    """
+    Load Wikipedia TSV files using lazy evaluation.
+
+    STREAMING OPTIMIZATION: Does NOT call count() during load to avoid full scans.
+    Data is loaded lazily and only materialized during the join operation.
+    Reference: https://spark.apache.org/docs/latest/tuning.html
+    """
     wiki_data = {}
 
-    # Load pages
+    # Load pages - NO count() to avoid full scan
     pages_path = wiki_dir / "pages.tsv"
     if pages_path.exists():
         wiki_data['pages'] = read_tsv(spark, pages_path, header=True)
-        logging.info(f"Loaded {wiki_data['pages'].count()} pages")
+        logger.info(f"Loaded pages from {pages_path} (lazy evaluation)")
 
-    # Load aliases
+    # Load aliases - NO count() to avoid full scan
     aliases_path = wiki_dir / "aliases.tsv"
     if aliases_path.exists():
         wiki_data['aliases'] = read_tsv(spark, aliases_path, header=True)
-        logging.info(f"Loaded {wiki_data['aliases'].count()} aliases")
+        logger.info(f"Loaded aliases from {aliases_path} (lazy evaluation)")
 
-    # Load categories
+    # Load categories - NO count() to avoid full scan
     categories_path = wiki_dir / "categories.tsv"
     if categories_path.exists():
         wiki_data['categories'] = read_tsv(spark, categories_path, header=True)
-        logging.info(f"Loaded {wiki_data['categories'].count()} categories")
+        logger.info(f"Loaded categories from {categories_path} (lazy evaluation)")
 
-    # Load abstracts (for wiki_abstract in join output)
+    # Load abstracts - NO count() to avoid full scan
     abstracts_path = wiki_dir / "abstract.tsv"
     if abstracts_path.exists():
         wiki_data['abstracts'] = read_tsv(spark, abstracts_path, header=True)
-        logging.info(f"Loaded {wiki_data['abstracts'].count()} abstracts")
+        logger.info(f"Loaded abstracts from {abstracts_path} (lazy evaluation)")
 
-    # Load infobox (optional, for additional context)
+    # Load infobox (optional) - NO count()
     infobox_path = wiki_dir / "infobox.tsv"
     if infobox_path.exists():
         wiki_data['infobox'] = read_tsv(spark, infobox_path, header=True)
+        logger.info(f"Loaded infobox from {infobox_path} (lazy evaluation)")
 
     return wiki_data
 
@@ -398,22 +406,36 @@ def join_entities_with_wiki(
     return final_df
 
 
-def generate_statistics(joined_df: DataFrame) -> Dict:
-    """Generate join statistics including unique_wiki_pages_joined."""
-    total_entities = joined_df.count()
-    matched_df = joined_df.filter(F.col("wiki_page_id").isNotNull())
-    matched_entities = matched_df.count()
-    unique_wiki_pages_joined = matched_df.select("wiki_page_id").distinct().count()
+def generate_statistics(joined_df: DataFrame, logger) -> Dict:
+    """
+    Generate join statistics using a SINGLE aggregation pass.
 
-    # Count unique documents with at least one wiki match
-    unique_docs_with_wiki = matched_df.select("doc_id").distinct().count()
+    STREAMING OPTIMIZATION: Uses a single groupBy aggregation instead of
+    multiple count() operations. This avoids multiple full scans of the data.
+    Reference: https://spark.apache.org/docs/latest/tuning.html
+    """
+    logger.info("Generating statistics (single aggregation pass)...")
 
-    # Stats by entity type
+    # Single aggregation to get all stats at once - avoids multiple scans
+    # This is much more efficient than multiple count() calls
+    overall_stats = joined_df.agg(
+        F.count("*").alias("total_entities"),
+        F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched_entities"),
+        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id"))).alias("unique_wiki_pages"),
+        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("doc_id"))).alias("unique_docs_with_wiki")
+    ).collect()[0]  # Single row result - safe to collect
+
+    total_entities = overall_stats["total_entities"]
+    matched_entities = overall_stats["matched_entities"]
+    unique_wiki_pages_joined = overall_stats["unique_wiki_pages"]
+    unique_docs_with_wiki = overall_stats["unique_docs_with_wiki"]
+
+    # Stats by entity type - single groupBy, small result set safe to collect
     type_stats = joined_df.groupBy("entity_type").agg(
         F.count("*").alias("total"),
         F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched"),
         F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id"))).alias("unique_pages")
-    ).collect()
+    ).collect()  # Small result set (few entity types) - safe to collect
 
     stats = {
         "total_entities": total_entities,
@@ -483,30 +505,32 @@ def main() -> int:
     spark.sparkContext.setLogLevel("WARN")
 
     try:
-        # Load entities
-        logger.info("Loading entities...")
+        # Load entities - NO count() to avoid full scan
+        logger.info("Loading entities (lazy evaluation)...")
         entities_df = load_entities(spark, entities_path, args.entities_max_rows)
-        entity_count = entities_df.count()
-        logger.info(f"Loaded {entity_count} entities")
-        struct_logger.log("entities_loaded", count=entity_count)
+        # Don't call count() here - let it be computed during statistics generation
+        logger.info(f"Loaded entities from {entities_path}")
+        struct_logger.log("entities_loaded", path=str(entities_path))
 
-        # Load Wikipedia data
-        logger.info("Loading Wikipedia data...")
-        wiki_data = load_wiki_data(spark, wiki_dir)
+        # Load Wikipedia data - NO count() calls (streaming optimization)
+        logger.info("Loading Wikipedia data (lazy evaluation)...")
+        wiki_data = load_wiki_data(spark, wiki_dir, logger)
 
         if 'pages' not in wiki_data:
             logger.error("Wikipedia pages not found")
             return 1
 
         # Prepare canonical mapping
-        logger.info("Building canonical mapping...")
+        # Use DISK_ONLY persistence to avoid OOM on large datasets
+        # Reference: https://spark.apache.org/docs/latest/tuning.html
+        logger.info("Building canonical mapping (DISK_ONLY persistence)...")
         canonical_df = prepare_canonical_mapping(
             wiki_data['pages'],
             wiki_data.get('aliases')
         )
-        canonical_df = canonical_df.cache()
-        canonical_count = canonical_df.count()
-        logger.info(f"Built canonical mapping with {canonical_count} entries")
+        # Use DISK_ONLY to spill to disk if memory is full - OOM safe
+        canonical_df = canonical_df.persist(StorageLevel.DISK_ONLY)
+        logger.info("Canonical mapping prepared (will materialize during join)")
 
         # Perform join with categories and abstracts
         logger.info("Joining entities with Wikipedia...")
@@ -517,10 +541,17 @@ def main() -> int:
             wiki_data.get('abstracts')
         )
 
-        # Generate statistics
-        stats = generate_statistics(joined_df)
+        # Persist joined_df to DISK_ONLY for reuse (writing + stats)
+        # This avoids recomputing the join multiple times
+        joined_df = joined_df.persist(StorageLevel.DISK_ONLY)
+
+        # Generate statistics - uses single aggregation pass (streaming optimized)
+        stats = generate_statistics(joined_df, logger)
         logger.info(f"Join statistics: {json.dumps(stats, indent=2)}")
         struct_logger.log("join_stats", **stats)
+
+        # Get entity_count from stats (computed during stats generation, not separate scan)
+        entity_count = stats['total_entities']
 
         if not args.dry_run:
             # Write main join results (includes wiki_abstract and wiki_categories)
@@ -631,9 +662,17 @@ def main() -> int:
         # Log completion
         struct_logger.log("complete", duration=duration, stats=stats)
 
+        # Clean up persisted DataFrames to free disk space
+        logger.info("Cleaning up persisted data...")
+        try:
+            canonical_df.unpersist()
+            joined_df.unpersist()
+        except Exception as cleanup_err:
+            logger.warning(f"Cleanup warning (non-fatal): {cleanup_err}")
+
         # Print summary
         logger.info("=" * 60)
-        logger.info("WIKI-HTML JOIN COMPLETE (DataFrame API)")
+        logger.info("WIKI-HTML JOIN COMPLETE (DataFrame API - Streaming Optimized)")
         logger.info(f"Duration: {duration:.2f} seconds")
         logger.info(f"Total entities: {stats['total_entities']}")
         logger.info(f"Matched entities: {stats['matched_entities']} ({stats['match_rate']}%)")

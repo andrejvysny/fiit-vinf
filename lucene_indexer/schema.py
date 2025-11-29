@@ -53,13 +53,13 @@ FIELD_DEFINITIONS: Dict[str, FieldDefinition] = {
     # -------------------------------------------------------------------------
     "doc_id": FieldDefinition(
         name="doc_id",
-        field_type=FieldType.STRING,
+        field_type=FieldType.STORED,
         stored=True,
-        indexed=True,
+        indexed=False,
         tokenized=False,
         justification="""
-        Document identifier (SHA256 hash of source URL).
-        Stored for retrieval, indexed for exact lookup.
+        Document identifier (SHA256 hash of source file).
+        Stored only (not indexed) - used for result identification.
         Not tokenized because it's an opaque identifier.
         Used to link search results back to source documents.
         """
@@ -108,14 +108,14 @@ FIELD_DEFINITIONS: Dict[str, FieldDefinition] = {
 
     "url": FieldDefinition(
         name="url",
-        field_type=FieldType.STRING,
+        field_type=FieldType.STORED,
         stored=True,
-        indexed=True,
+        indexed=False,
         tokenized=False,
         justification="""
         Original source URL (GitHub repository URL).
-        Stored for display/navigation in results.
-        Indexed as StringField for exact URL filtering.
+        Stored only (not indexed) - used for display/navigation in results.
+        Not indexed as URL-based filtering is not needed.
         Not tokenized - URLs are atomic identifiers.
         """
     ),

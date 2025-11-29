@@ -1,0 +1,32 @@
+{
+  "timestamp": "2025-11-28T23:28:21.119422",
+  "duration_seconds": 46.05,
+  "api": "Native Python",
+  "input": "/opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml",
+  "input_size_gb": 111.46,
+  "max_pages": 10000,
+  "outputs": {
+    "pages": "/opt/app/workspace/store/wiki/pages.tsv",
+    "categories": "/opt/app/workspace/store/wiki/categories.tsv",
+    "links": "/opt/app/workspace/store/wiki/links.tsv",
+    "infobox": "/opt/app/workspace/store/wiki/infobox.tsv",
+    "abstracts": "/opt/app/workspace/store/wiki/abstract.tsv",
+    "aliases": "/opt/app/workspace/store/wiki/aliases.tsv",
+    "text_metadata": "/opt/app/workspace/store/wiki/wiki_text_metadata.tsv",
+    "text_directory": "/opt/app/workspace/store/wiki/text"
+  },
+  "stats": {
+    "pages": 9913,
+    "categories": 66318,
+    "links": 1780735,
+    "infobox": 53440,
+    "abstracts": 6308,
+    "aliases": 2446,
+    "text_files_written": 7135,
+    "text_pages": 7467,
+    "unique_texts": 7467
+  },
+  "features": {
+    "text_extraction": true
+  }
+}

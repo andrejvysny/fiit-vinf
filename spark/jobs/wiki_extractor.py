@@ -34,6 +34,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, LongType,
     ArrayType, MapType
 )
+from pyspark import StorageLevel
 
 # Add project root to path
 sys.path.insert(0, '/opt/app')
@@ -108,8 +109,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         '--sample-threshold',
         type=int,
-        default=1000,
-        help='Use Python native reading for samples below this threshold (default: 1000)'
+        default=50000,
+        help='Use Python native streaming for samples below this threshold (default: 50000). '
+             'Native mode is memory-efficient and faster for medium-sized extractions.'
+    )
+    parser.add_argument(
+        '--force-spark',
+        action='store_true',
+        help='Force using Spark even for small samples (not recommended for < 50k pages)'
     )
     return parser.parse_args()
 
@@ -717,14 +724,19 @@ def main() -> int:
     # Determine if text extraction is enabled
     extract_text = args.extract_text and not args.no_text
 
-    # Use native Python for small samples (much faster than Spark for small data)
-    use_native = (args.wiki_max_pages is not None and
-                  args.wiki_max_pages <= args.sample_threshold)
+    # Use native Python streaming for samples up to threshold (much faster and memory-efficient)
+    # Native mode reads XML sequentially and processes incrementally - never loads full data
+    use_native = (
+        args.wiki_max_pages is not None and
+        args.wiki_max_pages <= args.sample_threshold and
+        not args.force_spark
+    )
 
     if use_native:
         logger.info("=" * 60)
-        logger.info(f"USING NATIVE PYTHON MODE (sample <= {args.sample_threshold})")
-        logger.info("This is much faster than Spark for small samples")
+        logger.info(f"USING NATIVE PYTHON STREAMING MODE (sample <= {args.sample_threshold})")
+        logger.info("This mode is memory-efficient: reads XML sequentially, never loads full data")
+        logger.info("Processing will stop as soon as max_pages is reached")
         logger.info("=" * 60)
 
         # Initialize pipeline stats
@@ -869,15 +881,15 @@ def main() -> int:
             spark, dump_file, args.wiki_max_pages, effective_partitions
         )
 
-        # CRITICAL: Cache the pages DataFrame to avoid re-scanning 111GB file
-        # This is essential when max_pages is set - without caching, each
-        # downstream operation would re-scan the entire file
+        # Use MEMORY_AND_DISK_SER persistence to avoid OOM errors
+        # This spills to disk when memory is full, using serialization to reduce GC pressure
+        # Reference: https://spark.apache.org/docs/latest/tuning.html
         if args.wiki_max_pages:
-            logger.info(f"Caching {args.wiki_max_pages} pages to avoid re-scanning large file...")
-            pages_df = pages_df.cache()
-            # Force materialization of cache
-            cached_count = pages_df.count()
-            logger.info(f"Cached {cached_count} pages in memory")
+            logger.info(f"Persisting up to {args.wiki_max_pages} pages with MEMORY_AND_DISK_SER...")
+            logger.info("This allows spilling to disk when memory is full (OOM-safe)")
+            pages_df = pages_df.persist(StorageLevel.MEMORY_AND_DISK_SER)
+            # Note: We don't call count() here to avoid forcing full materialization
+            # The data will be materialized lazily during processing
 
         # Process pages using DataFrame operations
         logger.info("Extracting structured data (DataFrame API)...")
@@ -890,20 +902,20 @@ def main() -> int:
             (pages_meta_df, categories_df, links_df,
              infobox_df, abstracts_df, aliases_df) = process_pages_dataframe(pages_df, extract_full_text=False)
 
-        # Write outputs
-        logger.info("Writing output files...")
+        # Write outputs - using streaming writes without forcing full materialization
+        # Reference: https://spark.apache.org/docs/latest/tuning.html (avoid collect/count)
+        logger.info("Writing output files (streaming mode - no full materialization)...")
 
-        # Cache pages_meta_df since it's used for count and write
-        pages_meta_df = pages_meta_df.cache()
-
-        # Pages metadata - get count first (triggers cache), then write
-        pages_count = pages_meta_df.count()
-        logger.info(f"Processing {pages_count} pages...")
+        # Pages metadata - write directly without count() to avoid OOM
+        # Use DISK_ONLY persistence if needed for reuse
+        pages_meta_df = pages_meta_df.persist(StorageLevel.DISK_ONLY)
 
         pages_path = output_dir / "pages.tsv"
         write_tsv(pages_meta_df, pages_path,
                   ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
                   header=True)
+        # Get count after write (data already on disk, safe to count)
+        pages_count = pages_meta_df.count()
         logger.info(f"Wrote {pages_count} pages to {pages_path}")
 
         # Categories
@@ -952,18 +964,15 @@ def main() -> int:
             text_dir = output_dir / "text"
             text_dir.mkdir(parents=True, exist_ok=True)
 
-            # Cache text_metadata_df for multiple operations
-            text_metadata_df = text_metadata_df.cache()
-            total_text_count = text_metadata_df.count()
-            logger.info(f"Found {total_text_count} text pages to process")
+            # Use DISK_ONLY persistence for text data (large, used multiple times)
+            # This avoids OOM by spilling to disk instead of holding in memory
+            text_metadata_df = text_metadata_df.persist(StorageLevel.DISK_ONLY)
 
-            # Deduplicate by SHA256
+            # Deduplicate by SHA256 - also persist to disk
             unique_texts_df = text_metadata_df.groupBy("content_sha256").agg(
                 F.first("plain_text").alias("text_content"),
                 F.first("content_length").alias("length")
-            ).cache()
-            unique_text_count = unique_texts_df.count()
-            logger.info(f"Found {unique_text_count} unique text contents")
+            ).persist(StorageLevel.DISK_ONLY)
 
             # Define schema for text file writing output
             write_schema = StructType([
@@ -979,7 +988,7 @@ def main() -> int:
             # Write using mapInPandas instead of RDD mapPartitions
             write_stats_df = unique_texts_df.mapInPandas(write_partition, schema=write_schema)
 
-            # Collect stats (small data only)
+            # Collect stats (small data only - just partition counts)
             write_stats = write_stats_df.agg(F.sum("files_written")).collect()
             text_files_written = write_stats[0][0] if write_stats else 0
 
@@ -993,6 +1002,10 @@ def main() -> int:
                 ["page_id", "title", "content_sha256", "content_length", "timestamp"],
                 header=True
             )
+
+            # Get counts AFTER writing (data is on disk now, safe to count)
+            total_text_count = text_metadata_df.count()
+            unique_text_count = unique_texts_df.count()
             logger.info(f"Wrote text metadata to {text_metadata_path}")
             logger.info(f"Text extraction stats: {total_text_count} pages, {unique_text_count} unique content ({text_files_written} files written)")
 
@@ -1047,6 +1060,17 @@ def main() -> int:
         write_manifest(manifest_path, manifest)
 
         struct_logger.log("complete", duration=duration, stats=stats)
+
+        # Clean up persisted DataFrames to free disk/memory
+        logger.info("Cleaning up persisted data...")
+        try:
+            pages_df.unpersist()
+            pages_meta_df.unpersist()
+            if extract_text:
+                text_metadata_df.unpersist()
+                unique_texts_df.unpersist()
+        except Exception as cleanup_err:
+            logger.warning(f"Cleanup warning (non-fatal): {cleanup_err}")
 
         # Print summary
         logger.info("=" * 60)

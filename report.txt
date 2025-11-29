@@ -1,31 +1,42 @@
 ====== Konzultácia 4. ======
 
 
-**GitHub**: https://github.com/andrejvysny/fiit-vinf
+**GitHub**: https://github.com/andrejvysny/vinf
 
 
-=====  1. Spark kód =====
+===== 1. Spark kód =====
 
 
 ==== 1.1 HTML Extractor (`spark/jobs/html_extractor.py`) ====
 
-
-Extrakcia textu a entít z HTML súborov pomocou PySpark DataFrame API.
+Extrakcia textu a entít z HTML súborov pomocou PySpark DataFrame API s `mapInPandas`.
 
 **Extrahované entity**:
 - `TOPICS` - témy repozitára
 - `LANG_STATS` - programovacie jazyky
 - `LICENSE` - licencia (MIT, Apache-2.0, ...)
 - `STAR_COUNT`, `FORK_COUNT` - počet hviezd a forkov
+- `README` - obsah README súboru
+
+**Štatistiky**:
+- Spracovaných súborov: 28,353
+- Extrahovaných entít: 10,130
 
 **Výstupy**:
 - `workspace/store/text/*.txt` - čistý text
-- `workspace/store/entities/entities.tsv` - entity (doc_id, type, value, offsets)
+- `workspace/store/spark/entities/entities.tsv` - entity (doc_id, type, value)
+
 
 ==== 1.2 Wikipedia Extractor (`spark/jobs/wiki_extractor.py`) ====
 
-
 Spracovanie Wikipedia XML dumpov (100GB+) pomocou streaming architektúry.
+
+**Štatistiky** (sample 500 stránok):
+- Kategórií: 3,114
+- Odkazov: 101,493
+- Infobox polí: 2,423
+- Abstraktov: 267
+- Aliasov: 177
 
 **Výstupy** (7 TSV súborov):
 | Súbor | Obsah |
@@ -37,8 +48,8 @@ Spracovanie Wikipedia XML dumpov (100GB+) pomocou streaming architektúry.
 | `links.tsv` | interné odkazy |
 | `infobox.tsv` | štruktúrované dáta z infoboxov |
 
-==== 1.3 Join (`spark/jobs/join_html_wiki.py`) ====
 
+==== 1.3 Join (`spark/jobs/join_html_wiki.py`) ====
 
 Prepojenie entít z HTML s Wikipedia stránkami.
 
@@ -48,42 +59,51 @@ Prepojenie entít z HTML s Wikipedia stránkami.
 3. Left join entít s Wikipedia
 4. Výpočet confidence (exact+cat, alias+cat, exact+abs, alias+abs)
 
+**Štatistiky**:
+- Celkom entít: 12,454
+- Úspešne prepojených: 7 (0.06%)
+- Unikátnych wiki stránok: 6
+
 **Výstupy**:
 - `html_wiki.tsv` - prepojenia s wiki_title, wiki_abstract, wiki_categories
 - `html_wiki_agg.tsv` - agregácie per dokument
-- `join_stats.json` - štatistiky (unique_wiki_pages_joined)
 
----
 
 ===== 2. PyLucene Index =====
 
 
-====  2.1 Schéma indexu (`lucene_indexer/schema.py`) ====
-
+==== 2.1 Schéma indexu (`lucene_indexer/schema.py`) ====
 
 | Pole | Typ | Odôvodnenie |
 |------|-----|-------------|
-| `doc_id` | StringField | Identifikátor dokumentu pre exact lookup |
-| `title` | TextField | Full-text vyhľadávanie v titulkoch |
-| `content` | TextField | Hlavný obsah (neukladá sa, len indexuje) |
+| `doc_id` | StringField | SHA256 hash súboru pre unikátnu identifikáciu |
+| `title` | TextField | Full-text vyhľadávanie v titulkoch s tokenizáciou |
+| `content` | TextField | Hlavný obsah (STORED=False pre úsporu miesta) |
 | `topics` | TextField (multi) | GitHub témy, tokenizované pre čiastočné zhody |
-| `languages` | TextField (multi) | Programovacie jazyky |
-| `license` | StringField | Presná zhoda licencie |
-| `star_count` | IntPoint | Range queries (napr. >1000 hviezd) |
-| `fork_count` | IntPoint | Range queries |
-| `wiki_title` | TextField (multi) | Názvy Wikipedia článkov |
-| `wiki_categories` | TextField (multi) | Wikipedia kategórie |
+| `languages` | TextField (multi) | Programovacie jazyky projektu |
+| `license` | StringField | Presná zhoda licencie (MIT, Apache-2.0) |
+| `star_count` | IntPoint + StoredField | Range queries (napr. star_count:[1000 TO *]) |
+| `fork_count` | IntPoint + StoredField | Range queries pre popularitu |
+| `wiki_title` | TextField (multi) | Názvy prepojených Wikipedia článkov |
+| `wiki_categories` | TextField (multi) | Wikipedia kategórie pre obohatenie |
 | `wiki_abstract` | TextField | Abstrakt z Wikipédie pre phrase queries |
-| `join_confidence` | StringField | Kvalita prepojenia s wiki |
-
-====  2.2 Typy polí ====
 
 
-- **TextField** - tokenizované, full-text vyhľadávanie
-- **StringField** - netokenizované, presná zhoda
-- **IntPoint/LongPoint** - numerické range queries
+==== 2.2 Typy polí ====
 
----
+- **TextField** - tokenizované pomocou StandardAnalyzer, vhodné pre full-text
+- **StringField** - netokenizované, presná zhoda (exact match)
+- **IntPoint** - numerické hodnoty pre efektívne range queries
+- **StoredField** - uloženie hodnoty pre retrieval
+
+
+==== 2.3 Štatistiky indexu ====
+
+- Indexovaných dokumentov: 28,353
+- Dokumentov s entitami: 30
+- Dokumentov s wiki prepojením: 6
+- Celkom entít v indexe: 10,130
+
 
 ===== 3. Typy dopytov (`lucene_indexer/search.py`) =====
 
@@ -97,11 +117,102 @@ Prepojenie entít z HTML s Wikipedia stránkami.
 | **Fuzzy** | Tolerancia preklepov (Levenshtein) | `pyhton` → `python` |
 
 
+**Implementácia Simple Search**:
+- Používa `BooleanQuery.Builder()` s `QueryParser` pre každé pole
+- Polia: `title`, `content`, `topics`, `languages`, `wiki_title`, `wiki_abstract`
+- Predvolený operátor: OR (stačí zhoda na ľubovoľnom poli)
+- Výsledky mapované do `SearchResult` s metadátami
 
-**Stručné zhrnutie fungovanie Simple Search (PyLucene):**
 
-  - Používa `StandardAnalyzer` a `MultiFieldQueryParser` nad poliami `title`, `content`, `topics`, `languages`, `wiki_title`, `wiki_abstract`.
-  - Predvolený operátor je OR, takže stačí zhoda na ľubovoľnom z polí; prázdny alebo whitespace dopyt sa okamžite vracia ako prázdny výsledok.
-  - Výsledky sa získajú cez `IndexSearcher.search(query, top_k)` a mapujú sa do `SearchResult` s metadátami (napr. `doc_id`, `title`, `path`, `topics`, `languages`, `star_count`, wiki údaje).
-  - Definované boosty polí sú zatiaľ v Simple režime nepoužité; hľadanie je čisté multi-field fulltext bez ďalších filtrov.
+===== 4. Porovnanie: TF-IDF vs PyLucene =====
 
+
+==== 4.1 Metodológia ====
+
+Porovnanie na 14 dopytoch rôznych typov pomocou `lucene_indexer/compare.py`.
+
+**Testované dopyty** (`queries.txt`):
+- Simple: `python web`, `machine learning`, `docker container`
+- Boolean: `python AND docker`, `web OR api`
+- Phrase: `"machine learning"`, `"web application"`
+- Fuzzy: `pyhton`, `machin lerning`, `javascrpt`
+
+
+==== 4.2 Výsledky ====
+
+| Metrika | TF-IDF | PyLucene |
+|---------|--------|----------|
+| Priemerná latencia | 27.8 ms | 40.9 ms |
+| Overlap@5 | - | 1.4% |
+| Overlap@10 | - | 5.7% |
+| Overlap@20 | - | 14.6% |
+
+
+**Overlap podľa typu dopytu (Top-20)**:
+| Typ dopytu | Overlap | Poznámka |
+|------------|---------|----------|
+| Simple | 16.0% | Rôzne skórovacie algoritmy (TF-IDF vs BM25) |
+| Boolean | 26.7% | Najvyššia zhoda, podobná sémantika AND/OR |
+| Phrase | 15.0% | Oba podporujú phrase matching |
+| Fuzzy | 0.0% | TF-IDF nepodporuje fuzzy, vracia 1 výsledok |
+
+
+==== 4.3 Príklad: Fuzzy dopyt "javascrpt" ====
+
+| Index | Počet výsledkov | Latencia |
+|-------|-----------------|----------|
+| TF-IDF | 1 | 0.3 ms |
+| PyLucene | 20 | 25.5 ms |
+
+PyLucene správne nájde dokumenty o "javascript" aj napriek preklepu.
+
+
+==== 4.4 Zhrnutie výhod PyLucene ====
+
+1. **Fuzzy queries** - tolerancia preklepov (Levenshtein distance)
+2. **BM25 skórovanie** - lepšie ako základné TF-IDF
+3. **Range queries** - efektívne na IntPoint poliach
+4. **Štruktúrované polia** - entity ako samostatné indexované polia
+5. **Škálovateľnosť** - komprimovaný inverted index s skip lists
+
+
+===== 5. Integrácia do aplikácie =====
+
+
+==== 5.1 CLI príkazy ====
+
+```bash
+# Spustenie celého pipeline
+bin/cli pipeline
+
+# Jednotlivé kroky
+bin/cli extract        # HTML extrakcia
+bin/cli wiki           # Wikipedia extrakcia
+bin/cli join           # Entity-Wiki join
+bin/cli lucene-build   # Build PyLucene indexu
+bin/cli lucene-search "python web"  # Vyhľadávanie
+bin/cli lucene-compare # Porovnanie TF-IDF vs Lucene
+
+# Štatistiky
+bin/cli stats          # Zobrazenie štatistík pipeline
+```
+
+
+===== 6. Štatistiky pipeline =====
+
+
+Všetky štatistiky sa automaticky ukladajú do `stats/`:
+
+| Stage | Status | Trvanie |
+|-------|--------|---------|
+| wiki_extraction | completed | 2.4s |
+| html_extraction | completed | 0.04s |
+| join | completed | <0.01s |
+| lucene_index | completed | 20.1s |
+| index_comparison | completed | 3.4s |
+
+**Celkové štatistiky**:
+- Dokumentov v indexe: 28,353
+- Entít extrahovaných: 10,130
+- Wiki stránok spracovaných: 500
+- Entity-Wiki prepojení: 7

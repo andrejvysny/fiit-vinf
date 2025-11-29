@@ -1,8 +1,8 @@
 {
   "stage": "join",
-  "run_id": "20251128_233915",
-  "start_time": "2025-11-28T23:39:15.681750",
-  "end_time": "2025-11-28T23:39:15.681795",
+  "run_id": "20251128_233219",
+  "start_time": "2025-11-28T23:32:19.094637",
+  "end_time": "2025-11-28T23:32:19.094695",
   "duration_seconds": 0.0,
   "status": "completed",
   "config": {
@@ -12,8 +12,8 @@
   "inputs": {
     "entities_file": "/opt/app/workspace/store/spark/entities/entities.tsv",
     "wiki_dir": "/opt/app/workspace/store/wiki",
-    "entity_count": 12454,
-    "total_items": 12454
+    "entity_count": 10130,
+    "total_items": 10130
   },
   "outputs": {
     "join_file": "/opt/app/workspace/store/join/html_wiki.tsv",
@@ -59,7 +59,7 @@
     }
   },
   "performance": {
-    "entities_per_second": 304.72,
+    "entities_per_second": 367.99,
     "success_rate": 100.0,
     "error_count": 0
   },

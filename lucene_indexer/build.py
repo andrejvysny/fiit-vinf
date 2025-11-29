@@ -228,7 +228,7 @@ class LuceneIndexBuilder:
         doc = Document()
 
         # Core fields
-        doc.add(StringField("doc_id", doc_id, Field.Store.YES))
+        doc.add(StoredField("doc_id", doc_id))  # StoredField only (not indexed)
         doc.add(TextField("title", title, Field.Store.YES))
         doc.add(TextField("content", content, Field.Store.NO))  # Large, don't store
         doc.add(StoredField("path", path))
@@ -273,9 +273,9 @@ class LuceneIndexBuilder:
                 doc.add(IntPoint("fork_count", fork_count))
                 doc.add(StoredField("fork_count", fork_count))
 
-            # URL
+            # URL (StoredField only - not indexed)
             if entities.get('url'):
-                doc.add(StringField("url", entities['url'], Field.Store.YES))
+                doc.add(StoredField("url", entities['url']))
 
         # Wiki enrichment fields
         if doc_id in self._wiki_cache:

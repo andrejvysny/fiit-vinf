@@ -5,7 +5,7 @@
       "query_type": "simple",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 50.12,
+        "latency_ms": 45.69,
         "top_5_docs": [
           "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
           "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
@@ -16,7 +16,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 70.07,
+        "latency_ms": 58.58,
         "top_5_docs": [
           "42986e1430e4abdc974e39bb39de79063ece0940a7db5ea54d0e23e2ef4ea544",
           "7ee306ec948d158c2ad180c098d9e5f5d642e7b188c800ec29ba79f3f8c54273",
@@ -30,14 +30,14 @@
         "10": 0.1,
         "20": 0.05
       },
-      "latency_improvement_pct": -39.8
+      "latency_improvement_pct": -28.2
     },
     {
       "query": "machine learning",
       "query_type": "simple",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 46.39,
+        "latency_ms": 43.83,
         "top_5_docs": [
           "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
           "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
@@ -48,7 +48,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 36.12,
+        "latency_ms": 28.4,
         "top_5_docs": [
           "c8a8175374ea1e993440f332c4f36c3323a7937dd3310850eed9c91d0b51ee59",
           "4a9b14b261fd3d48d20372fe39ba298ad97fe62e4620f2074db8179a459c7a55",
@@ -62,14 +62,14 @@
         "10": 0.0,
         "20": 0.1
       },
-      "latency_improvement_pct": 22.2
+      "latency_improvement_pct": 35.2
     },
     {
       "query": "docker container",
       "query_type": "simple",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 10.23,
+        "latency_ms": 9.99,
         "top_5_docs": [
           "ea8bd38d8f7212d8f490437de6253e0d0553e9e6f31035740c3f7e082e557ccd",
           "1373b0c80eacfdcb258a4f7a438ef70b79e6a1902e21129bb750dc1638977967",
@@ -80,7 +80,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 27.06,
+        "latency_ms": 25.65,
         "top_5_docs": [
           "d5a27af1ad65f1a71da99da08f2f728142b89a2f594cb1288ab574fd90fc0efd",
           "3654daa392e40cf0fb4a09dabb677b03fc6d157b340388367126fbe4f1752703",
@@ -94,14 +94,14 @@
         "10": 0.1,
         "20": 0.4
       },
-      "latency_improvement_pct": -164.5
+      "latency_improvement_pct": -156.7
     },
     {
       "query": "javascript framework",
       "query_type": "simple",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 27.57,
+        "latency_ms": 26.84,
         "top_5_docs": [
           "603f989f5182fc9df60100a8ab886d86ed63a642970e4c4b095f5d6abc6bbbab",
           "0f7835db8771179c1c83ba3f11eb6a9f098f09347a4617bb5d8d5663e4e57779",
@@ -112,7 +112,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 43.93,
+        "latency_ms": 39.8,
         "top_5_docs": [
           "02b6137ece169c71c0bf746a1a7477cc86ca5656352980983fefddb4f2db0bfd",
           "440ebbf3852b122f73332873a6ea1d7d51a9ecd1430719495937815fb4a615d5",
@@ -126,14 +126,14 @@
         "10": 0.2,
         "20": 0.1
       },
-      "latency_improvement_pct": -59.3
+      "latency_improvement_pct": -48.3
     },
     {
       "query": "database optimization",
       "query_type": "simple",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 10.36,
+        "latency_ms": 10.22,
         "top_5_docs": [
           "8a369ccb17363757e9ef8fa739624bc5328854a86642b6923122c0de73eb857f",
           "d1e30fba2c49b0d5a8b57b292995596a55fef3fb6bf96cc6cc4591661a5f1d06",
@@ -144,7 +144,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 28.35,
+        "latency_ms": 25.31,
         "top_5_docs": [
           "d5ae8ff2e53a38c883f0b7b783d4528046930c8e79c11d5d32e632988ff5dc9b",
           "a31b59e4bd21093dbd0c691b88dcdbfda42742a515d9a6be0d233164d4dbbf78",
@@ -158,14 +158,14 @@
         "10": 0.1,
         "20": 0.15
       },
-      "latency_improvement_pct": -173.8
+      "latency_improvement_pct": -147.6
     },
     {
       "query": "python AND docker",
       "query_type": "boolean",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 46.31,
+        "latency_ms": 43.4,
         "top_5_docs": [
           "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
           "ea8bd38d8f7212d8f490437de6253e0d0553e9e6f31035740c3f7e082e557ccd",
@@ -176,7 +176,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 34.53,
+        "latency_ms": 38.37,
         "top_5_docs": [
           "2b4ea162c076f980f8a61998d78677a474834aa6243e7b761e8ffb4b03886ade",
           "8ed1b07b784d7de1f13001d454d3b100d1472aa1aec586786aa1955f57c47969",
@@ -190,14 +190,14 @@
         "10": 0.2,
         "20": 0.45
       },
-      "latency_improvement_pct": 25.4
+      "latency_improvement_pct": 11.6
     },
     {
       "query": "web OR api",
       "query_type": "boolean",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 53.88,
+        "latency_ms": 49.62,
         "top_5_docs": [
           "b580a742720f9c67de04ce8ee67c4c0523986e5640cbbbb71adfe4e3ee5816ff",
           "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
@@ -208,7 +208,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 28.41,
+        "latency_ms": 19.94,
         "top_5_docs": [
           "bf655c4f33e6ed8f13017a43460467dcf80f4b881af549a5f6285a4d236a723b",
           "7981aef817ee50a6856c159d6165894c514adad3caa378f11e6e5694cb6a71c5",
@@ -222,14 +222,14 @@
         "10": 0.0,
         "20": 0.05
       },
-      "latency_improvement_pct": 47.3
+      "latency_improvement_pct": 59.8
     },
     {
       "query": "machine AND learning AND neural",
       "query_type": "boolean",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 38.35,
+        "latency_ms": 34.62,
         "top_5_docs": [
           "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
           "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
@@ -240,7 +240,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 17.09,
+        "latency_ms": 22.38,
         "top_5_docs": [
           "4b96571125639f9bde4cb2d7820f530cd5bfca2357a4e76bd0164e59ff2386ca",
           "64745261e819e76853aff130790e3b9ea65fb43448bd00e8aad88857f7be0843",
@@ -254,14 +254,14 @@
         "10": 0.0,
         "20": 0.3
       },
-      "latency_improvement_pct": 55.4
+      "latency_improvement_pct": 35.4
     },
     {
       "query": "machine learning",
       "query_type": "phrase",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 27.72,
+        "latency_ms": 26.5,
         "top_5_docs": [
           "3a359b5b57e4fe8ec45c64716890c10e4ddbef9e2bf9d66aefcb3fbf9c04152b",
           "7ab02c522b6f67c00271bac08b0df37995abd8e96246bde101802c057f3aa022",
@@ -272,7 +272,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 41.87,
+        "latency_ms": 37.1,
         "top_5_docs": [
           "4d758f713e579013b59a27f5922f33b574c691abf61f0d457a90c2e8408494ae",
           "6e8bd6de723921e8fc8f4dbc0db9988ea2d4336a402c23cd05bddb578d692ca8",
@@ -286,14 +286,14 @@
         "10": 0.1,
         "20": 0.3
       },
-      "latency_improvement_pct": -51.1
+      "latency_improvement_pct": -40.0
     },
     {
       "query": "web application",
       "query_type": "phrase",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 17.37,
+        "latency_ms": 16.2,
         "top_5_docs": [
           "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
           "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
@@ -304,7 +304,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 35.82,
+        "latency_ms": 23.71,
         "top_5_docs": [
           "39f549f5234a00a12bd1b95293573e29833a177702d14cb862bd80600993bee4",
           "3c5ce80611d671bf384a456629a268e4216af245587650e50385a9b8c9ad2a53",
@@ -318,14 +318,14 @@
         "10": 0.0,
         "20": 0.1
       },
-      "latency_improvement_pct": -106.3
+      "latency_improvement_pct": -46.4
     },
     {
       "query": "open source",
       "query_type": "phrase",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 59.58,
+        "latency_ms": 59.67,
         "top_5_docs": [
           "cb13f36bbe19a740bd54828d74681f7187fc039d0806d1223acab7e08017c731",
           "99d1af26ec8acbb2d36b91d26c1ea89413b1a5fb2ba25618b89a4078077ed7b9",
@@ -336,7 +336,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 33.3,
+        "latency_ms": 30.91,
         "top_5_docs": [
           "bf28d672c65d2baf0702a4546a9a567c7960b441bb007d83f1a55280af2b9e54",
           "5928ba5174b12777344f439d3fd677bddf0f09f7e3972c776a98e0fe80bf6299",
@@ -350,14 +350,14 @@
         "10": 0.0,
         "20": 0.05
       },
-      "latency_improvement_pct": 44.1
+      "latency_improvement_pct": 48.2
     },
     {
       "query": "pyhton",
       "query_type": "fuzzy",
       "tfidf": {
         "result_count": 20,
-        "latency_ms": 0.43,
+        "latency_ms": 0.55,
         "top_5_docs": [
           "0b70bcf38f46eeba519bdd7254e67aab1de4dbab49187aefece3835cca49db38",
           "27bc8781d28979ae8c32dd423bff5da60cd492af10ce95758afeabfae937dddf",
@@ -368,7 +368,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 104.63,
+        "latency_ms": 106.27,
         "top_5_docs": [
           "b4177b034209d86ccd82dd456abf762b7443aaebd01b69d7646ef4740ccda5da",
           "047949c94f23e7a3d0e17c29df1b29e2a80052ac6d74d4072212c34a99ad1786",
@@ -382,14 +382,14 @@
         "10": 0.0,
         "20": 0.0
       },
-      "latency_improvement_pct": -24440.5
+      "latency_improvement_pct": -19117.9
     },
     {
       "query": "machin lerning",
       "query_type": "fuzzy",
       "tfidf": {
         "result_count": 19,
-        "latency_ms": 0.62,
+        "latency_ms": 0.5,
         "top_5_docs": [
           "15add4b7d485f2579d494cb52f0b648fd8e281b488551afbab9fd6df0d876448",
           "3dbad4830a9c0822891280ece4de2f63ad1a752e09b4f2105d754a79bf30da67",
@@ -400,7 +400,7 @@
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 44.38,
+        "latency_ms": 38.18,
         "top_5_docs": [
           "39b8589d1c3f8f40dfedf820659f4f3009255f521f9308f5463883d4da1cf617",
           "064534aef7fc06763991fb049d8f047068b0c321adaf3409435c9443730c98e1",
@@ -414,21 +414,21 @@
         "10": 0.0,
         "20": 0.0
       },
-      "latency_improvement_pct": -7019.5
+      "latency_improvement_pct": -7520.1
     },
     {
       "query": "javascrpt",
       "query_type": "fuzzy",
       "tfidf": {
         "result_count": 1,
-        "latency_ms": 0.34,
+        "latency_ms": 0.31,
         "top_5_docs": [
           "9df1b3d805218567e3b12b379b8cd006a04a806f00e13d44f4ea6dd5723ddb89"
         ]
       },
       "lucene": {
         "result_count": 20,
-        "latency_ms": 26.98,
+        "latency_ms": 29.4,
         "top_5_docs": [
           "34f5e06d1d8724190e8d1512c2f7f4a8e392d2dcb09879fc7e230bb4f13edb10",
           "e999ed6f90998c4116cefdd2c28d7f47f2c60d9b5c04957c15f2d8816b12c8f3",
@@ -442,8 +442,8 @@
         "10": 0.0,
         "20": 0.0
       },
-      "latency_improvement_pct": -7903.0
+      "latency_improvement_pct": -9239.7
     }
   ],
-  "generated_at": "2025-11-28T21:29:34.022760"
+  "generated_at": "2025-11-28T22:54:16.074629"
 }

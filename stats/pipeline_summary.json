@@ -1,19 +1,19 @@
 {
-  "generated_at": "2025-11-28T21:29:34.026177",
+  "generated_at": "2025-11-28T23:39:15.685414",
   "stages": {
     "wiki_extraction": {
       "status": "completed",
-      "duration_seconds": 2.4,
-      "run_id": "20251128_175832",
-      "start_time": "2025-11-28T17:58:32.992403",
-      "end_time": "2025-11-28T17:58:35.392953",
-      "pages_processed": 500,
-      "categories": 3114,
-      "links": 101493,
-      "infobox_fields": 2423,
-      "abstracts": 267,
-      "aliases": 177,
-      "text_files": 0
+      "duration_seconds": 46.05,
+      "run_id": "20251128_232735",
+      "start_time": "2025-11-28T23:27:35.071675",
+      "end_time": "2025-11-28T23:28:21.123599",
+      "pages_processed": 9913,
+      "categories": 66318,
+      "links": 1780735,
+      "infobox_fields": 53440,
+      "abstracts": 6308,
+      "aliases": 2446,
+      "text_files": 7135
     },
     "html_extraction": {
       "status": "completed",
@@ -36,37 +36,37 @@
     "join": {
       "status": "completed",
       "duration_seconds": 0.0,
-      "run_id": "20251128_180023",
-      "start_time": "2025-11-28T18:00:23.443857",
-      "end_time": "2025-11-28T18:00:23.443897",
+      "run_id": "20251128_233915",
+      "start_time": "2025-11-28T23:39:15.681750",
+      "end_time": "2025-11-28T23:39:15.681795",
       "total_entities": 12454,
-      "matched_entities": 7,
-      "match_rate": 0.06,
-      "unique_wiki_pages": 6,
-      "unique_docs_matched": 6
+      "matched_entities": 129,
+      "match_rate": 1.04,
+      "unique_wiki_pages": 51,
+      "unique_docs_matched": 30
     },
     "lucene_index": {
       "status": "completed",
       "duration_seconds": 0.0,
-      "run_id": "20251128_211942",
-      "start_time": "2025-11-28T21:19:42.614812",
-      "end_time": "2025-11-28T21:19:42.614845",
+      "run_id": "20251128_233329",
+      "start_time": "2025-11-28T23:33:29.432093",
+      "end_time": "2025-11-28T23:33:29.432245",
       "docs_indexed": 28353,
       "docs_with_entities": 30,
-      "docs_with_wiki": 6,
+      "docs_with_wiki": 30,
       "total_entities": 10130,
-      "total_wiki_matches": 7
+      "total_wiki_matches": 129
     },
     "index_comparison": {
       "status": "completed",
-      "duration_seconds": 3.37,
-      "run_id": "20251128_212930",
-      "start_time": "2025-11-28T21:29:30.655463",
-      "end_time": "2025-11-28T21:29:34.024078",
+      "duration_seconds": 3.09,
+      "run_id": "20251128_225412",
+      "start_time": "2025-11-28T22:54:12.986625",
+      "end_time": "2025-11-28T22:54:16.075712",
       "queries_compared": 14,
-      "avg_tfidf_latency_ms": 27.8,
-      "avg_lucene_latency_ms": 40.9,
-      "latency_improvement_pct": -47.1,
+      "avg_tfidf_latency_ms": 26.28,
+      "avg_lucene_latency_ms": 37.43,
+      "latency_improvement_pct": -42.4,
       "avg_overlap_at_5": 1.4,
       "avg_overlap_at_10": 5.7,
       "avg_overlap_at_20": 14.6,
@@ -79,11 +79,11 @@
     }
   },
   "totals": {
-    "total_duration_seconds": 5.8100000000000005,
+    "total_duration_seconds": 49.17999999999999,
     "total_entities_extracted": 10130,
-    "total_wiki_pages": 500,
+    "total_wiki_pages": 9913,
     "total_html_files": 30,
-    "total_joins": 7,
+    "total_joins": 129,
     "overall_status": "completed",
     "total_docs_indexed": 28353
   }
