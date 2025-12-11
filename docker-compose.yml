@@ -39,11 +39,11 @@ services:
     platform: linux/amd64
     working_dir: /opt/app
     environment:
+      - SPARK_LOCAL_DIRS=/tmp/spark
       - SPARK_NO_DAEMONIZE=1
       - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-6g}
       - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
       - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
-      - SPARK_LOCAL_DIRS=/tmp/spark
       - PYTHONPATH=/opt/app
       - PYSPARK_PYTHON=python3
       - HOME=/tmp
@@ -54,6 +54,7 @@ services:
       - ./workspace/store/text:/opt/app/workspace/store/text
       - ./workspace/store/entities:/opt/app/workspace/store/entities
       - ./spark:/opt/app/spark:ro
+      - ./spark_temp:/tmp/spark
       - ./extractor:/opt/app/extractor:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./requirements.txt:/opt/app/requirements.txt:ro
@@ -81,6 +82,8 @@ services:
           --conf spark.local.dir=/tmp/spark \
           /opt/app/spark/main.py --config /opt/app/config.yml --partitions $${PARTITIONS:-128} $${SPARK_ARGS:-}
     user: "0:0"
+    ports:
+      - "4040:4040"
     networks:
       - vinf-net
     deploy:
@@ -99,9 +102,10 @@ services:
     environment:
       - SPARK_NO_DAEMONIZE=1
       # Wiki extraction needs more memory for large dumps
-      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-8g}
-      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-4g}
-      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-2g}
+      - SPARK_DRIVER_MEMORY=${SPARK_DRIVER_MEMORY:-14g}
+      - SPARK_EXECUTOR_MEMORY=${SPARK_EXECUTOR_MEMORY:-8g}
+      - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-4g}
+      - SPARK_PYTHON_WORKER_MEMORY=${SPARK_PYTHON_WORKER_MEMORY:-4g}
       - SPARK_LOCAL_DIRS=/tmp/spark
       - PYTHONPATH=/opt/app
       - PYSPARK_PYTHON=python3
@@ -110,6 +114,7 @@ services:
     volumes:
       - ./wiki_dump:/opt/app/wiki_dump:ro
       - ./workspace/store/wiki:/opt/app/workspace/store/wiki
+      - ./spark_local:/tmp/spark
       - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./requirements.txt:/opt/app/requirements.txt:ro
@@ -125,9 +130,9 @@ services:
         pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
         /opt/spark/bin/spark-submit \
           --master local[*] \
-          --driver-memory $${SPARK_DRIVER_MEMORY:-8g} \
-          --executor-memory $${SPARK_EXECUTOR_MEMORY:-4g} \
-          --conf spark.driver.maxResultSize=$${SPARK_MAX_RESULT_SIZE:-2g} \
+          --driver-memory $${SPARK_DRIVER_MEMORY:-14g} \
+          --executor-memory $${SPARK_EXECUTOR_MEMORY:-8g} \
+          --conf spark.driver.maxResultSize=$${SPARK_MAX_RESULT_SIZE:-4g} \
           --conf spark.sql.adaptive.enabled=true \
           --conf spark.sql.adaptive.coalescePartitions.enabled=true \
           --conf spark.sql.shuffle.partitions=$${PARTITIONS:-256} \
@@ -136,7 +141,7 @@ services:
           --conf spark.memory.fraction=0.8 \
           --conf spark.memory.storageFraction=0.3 \
           --conf spark.memory.offHeap.enabled=true \
-          --conf spark.memory.offHeap.size=2g \
+          --conf spark.memory.offHeap.size=4g \
           --conf spark.local.dir=/tmp/spark \
           /opt/app/spark/jobs/wiki_extractor.py \
             --wiki-in /opt/app/wiki_dump \
@@ -150,7 +155,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${CONTAINER_MEMORY_LIMIT:-12g}
+          memory: ${CONTAINER_MEMORY_LIMIT:-16g}
 
   # --------------------------------------------------------------------------
   # Entity-Wiki Join: Match extracted entities with Wikipedia pages

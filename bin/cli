@@ -14,7 +14,6 @@ set -euo pipefail
 #   lucene-build  - Build PyLucene index
 #   lucene-search - Search the Lucene index
 #   lucene-compare- Compare TF-IDF vs Lucene results
-#   pipeline      - Run full pipeline (extract → wiki → join → lucene-build)
 #   stats         - Show pipeline statistics
 #
 # Usage:
@@ -77,7 +76,6 @@ Subcommands:
   lucene-build   Build PyLucene index from extracted data
   lucene-search  Search the Lucene index
   lucene-compare Compare TF-IDF vs Lucene search results
-  pipeline       Run full pipeline automatically
   stats          Show pipeline statistics and generate reports
 
 Global Options:
@@ -86,11 +84,10 @@ Global Options:
 
 Examples:
   bin/cli extract --sample 100                    # Test extraction with 100 files
-  bin/cli wiki --wiki-max-pages 1000              # Test wiki with 1000 pages
+  bin/cli wiki --sample 10000                     # Test wiki with 10k pages
   bin/cli join                                    # Run entity-wiki join
   bin/cli lucene-build                            # Build Lucene index
   bin/cli lucene-search --query "python web"      # Search index
-  bin/cli pipeline                                # Run full pipeline
 
 Environment Variables:
   SPARK_DRIVER_MEMORY     Spark driver memory (default: 6g)
@@ -139,11 +136,6 @@ cmd_extract() {
                 SPARK_ARGS="$SPARK_ARGS --dry-run"
                 shift
                 ;;
-            --local)
-                print_warning "Running local Python extractor (no Docker)"
-                cd "${PROJECT_ROOT}"
-                exec python -m extractor "$@"
-                ;;
             *)
                 SPARK_ARGS="$SPARK_ARGS $1"
                 shift
@@ -162,7 +154,6 @@ Options:
   -p, --partitions N  Number of Spark partitions (default: 128)
   -f, --force         Overwrite existing outputs
   --dry-run           List files without processing
-  --local             Use local Python extractor (no Docker)
   -h, --help          Show this help
 
 Examples:
@@ -196,7 +187,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm \
+    docker compose -f "${COMPOSE_FILE}" run  \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
@@ -214,11 +205,8 @@ EOF
 cmd_wiki() {
     check_docker
 
-    # Defaults
-    local WIKI_ARGS=""
-    local WIKI_MAX_PAGES=""
-    local PARTITIONS="${PARTITIONS:-256}"
     local SHOW_HELP=false
+    local SAMPLE_PAGES=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -227,41 +215,26 @@ cmd_wiki() {
                 SHOW_HELP=true
                 shift
                 ;;
-            --wiki-max-pages|-m)
-                WIKI_MAX_PAGES="$2"
-                WIKI_ARGS="$WIKI_ARGS --wiki-max-pages $2"
+            -s|--sample|--wiki-max-pages|--max-wiki-pages)
+                SAMPLE_PAGES="$2"
                 shift 2
-                ;;
-            --partitions|-p)
-                PARTITIONS="$2"
-                shift 2
-                ;;
-            --no-text)
-                WIKI_ARGS="$WIKI_ARGS --no-text"
-                shift
-                ;;
-            --dry-run)
-                WIKI_ARGS="$WIKI_ARGS --dry-run"
-                shift
                 ;;
             *)
-                WIKI_ARGS="$WIKI_ARGS $1"
-                shift
+                print_error "Unknown option for wiki: $1"
+                echo "Use --help for usage."
+                exit 1
                 ;;
         esac
     done
 
     if [[ "$SHOW_HELP" == "true" ]]; then
         cat <<EOF
-Extract structured data from Wikipedia XML dump.
+Extract structured data from Wikipedia XML dump (preconfigured Spark settings).
 
 Usage: bin/cli wiki [options]
 
 Options:
-  -m, --wiki-max-pages N  Limit pages to process (for testing)
-  -p, --partitions N      Number of Spark partitions (default: 256)
-  --no-text               Skip full text extraction
-  --dry-run               List files without processing
+  -s, --sample N          Limit wiki pages for a test run (applies --wiki-max-pages)
   -h, --help              Show this help
 
 Outputs:
@@ -271,37 +244,58 @@ Outputs:
   workspace/store/wiki/infobox.tsv     Infobox data
   workspace/store/wiki/abstract.tsv    Article abstracts
   workspace/store/wiki/aliases.tsv     Redirect aliases
-  workspace/store/wiki/text/           Full article text files
+  workspace/store/wiki/text/           Full article text files (disabled in default config)
 
 Examples:
-  bin/cli wiki --wiki-max-pages 100    # Test with 100 pages
-  bin/cli wiki --partitions 512        # Full extraction with more partitions
+  bin/cli wiki --sample 10000          # Test with 10k pages
+  bin/cli wiki                         # Full extraction (preconfigured)
+
+Preconfigured Spark settings (edit bin/cli to change):
+  - Driver Memory: 14g
+  - Executor Memory: 8g
+  - Python Worker Memory: 4g
+  - Network Timeout: 1200s
+  - Heartbeat Interval: 60s
+  - Partitions: 512
+  - Flags: --force-spark --no-text --force
 EOF
         return 0
     fi
 
-    # Set memory based on mode
-    if [[ -n "${WIKI_MAX_PAGES}" ]] && [[ "${WIKI_MAX_PAGES}" -le 1000 ]]; then
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
-    else
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-12g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-6g}"
-    fi
-    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-4g}"
+    # Hardcoded optimized settings for wiki extraction
+    export SPARK_DRIVER_MEMORY="14g"
+    export SPARK_EXECUTOR_MEMORY="8g"
+    export SPARK_MAX_RESULT_SIZE="4g"
+    export SPARK_NETWORK_TIMEOUT="1200s"
+    export SPARK_EXECUTOR_HEARTBEAT_INTERVAL="60s"
+    export SPARK_PYTHON_WORKER_MEMORY="4g"
+    export PARTITIONS="512"
 
-    print_header "Spark Wikipedia Extraction"
+    local WIKI_ARGS="--force-spark --no-text --force"
+
+    if [[ -n "${SAMPLE_PAGES}" ]]; then
+        WIKI_ARGS="${WIKI_ARGS} --wiki-max-pages ${SAMPLE_PAGES}"
+    fi
+
+    print_header "Spark Wikipedia Extraction (Preconfigured)"
     echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
     echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
+    echo "Python Worker Memory: ${SPARK_PYTHON_WORKER_MEMORY}"
+    echo "Network Timeout: ${SPARK_NETWORK_TIMEOUT}"
+    echo "Heartbeat Interval: ${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}"
     echo "Partitions: ${PARTITIONS}"
-    [[ -n "${WIKI_MAX_PAGES}" ]] && echo "Max Pages: ${WIKI_MAX_PAGES}"
+    echo "Text Extraction: disabled (change in bin/cli to enable)"
+    [[ -n "${SAMPLE_PAGES}" ]] && echo "Sample Pages: ${SAMPLE_PAGES}"
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm \
+    docker compose -f "${COMPOSE_FILE}" run  \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
+        -e SPARK_NETWORK_TIMEOUT="${SPARK_NETWORK_TIMEOUT}" \
+        -e SPARK_EXECUTOR_HEARTBEAT_INTERVAL="${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}" \
+        -e SPARK_PYTHON_WORKER_MEMORY="${SPARK_PYTHON_WORKER_MEMORY}" \
         -e PARTITIONS="${PARTITIONS}" \
         -e WIKI_ARGS="${WIKI_ARGS}" \
         spark-wiki
@@ -387,7 +381,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm \
+    docker compose -f "${COMPOSE_FILE}" run \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
@@ -616,7 +610,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm lucene-build
+    docker compose -f "${COMPOSE_FILE}" run  lucene-build
 
     print_success "Lucene index build completed"
 }
@@ -735,7 +729,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm \
+    docker compose -f "${COMPOSE_FILE}" run  \
         -e QUERY="${QUERY}" \
         -e QUERY_TYPE="${QUERY_TYPE}" \
         -e TOP="${TOP}" \
@@ -795,7 +789,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run --rm lucene-compare
+    docker compose -f "${COMPOSE_FILE}" run  lucene-compare
 
     print_success "Comparison completed"
 }
@@ -873,7 +867,7 @@ EOF
     # Check if stats directory exists
     if [[ ! -d "${STATS_DIR}" ]]; then
         print_warning "Stats directory not found: ${STATS_DIR}"
-        echo "Run the pipeline first to generate statistics."
+        echo "Run extract/wiki/join/lucene first to generate statistics."
         return 1
     fi
 
@@ -992,137 +986,6 @@ with open('${STATS_DIR}/pipeline_summary.json') as f:
 }
 
 # =============================================================================
-# Subcommand: pipeline
-# =============================================================================
-
-cmd_pipeline() {
-    local SHOW_HELP=false
-    local SKIP_EXTRACT=false
-    local SKIP_WIKI=false
-    local SKIP_JOIN=false
-    local SKIP_LUCENE=false
-    local SAMPLE=""
-    local WIKI_MAX_PAGES=""
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -h|--help)
-                SHOW_HELP=true
-                shift
-                ;;
-            --skip-extract)
-                SKIP_EXTRACT=true
-                shift
-                ;;
-            --skip-wiki)
-                SKIP_WIKI=true
-                shift
-                ;;
-            --skip-join)
-                SKIP_JOIN=true
-                shift
-                ;;
-            --skip-lucene)
-                SKIP_LUCENE=true
-                shift
-                ;;
-            --sample|-s)
-                SAMPLE="$2"
-                shift 2
-                ;;
-            --wiki-max-pages|-m)
-                WIKI_MAX_PAGES="$2"
-                shift 2
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-
-    if [[ "$SHOW_HELP" == "true" ]]; then
-        cat <<EOF
-Run the full VINF pipeline.
-
-Usage: bin/cli pipeline [options]
-
-Options:
-  -s, --sample N          Sample size for extraction
-  -m, --wiki-max-pages N  Limit wiki pages
-  --skip-extract          Skip HTML extraction
-  --skip-wiki             Skip Wikipedia extraction
-  --skip-join             Skip entity-wiki join
-  --skip-lucene           Skip Lucene index build
-  -h, --help              Show this help
-
-Pipeline Steps:
-  1. extract      - HTML extraction from GitHub pages
-  2. wiki         - Wikipedia dump extraction
-  3. join         - Entity-Wiki join
-  4. lucene-build - Build PyLucene index
-
-Examples:
-  bin/cli pipeline                               # Full pipeline
-  bin/cli pipeline --sample 100 --wiki-max-pages 1000  # Test run
-  bin/cli pipeline --skip-extract --skip-wiki    # Only join and index
-EOF
-        return 0
-    fi
-
-    print_header "VINF Full Pipeline"
-    echo "Steps: extract → wiki → join → lucene-build"
-    echo ""
-
-    # Step 1: Extract
-    if [[ "$SKIP_EXTRACT" == "false" ]]; then
-        echo ""
-        print_header "Step 1/4: HTML Extraction"
-        if [[ -n "${SAMPLE}" ]]; then
-            cmd_extract --sample "${SAMPLE}"
-        else
-            cmd_extract
-        fi
-    else
-        print_warning "Skipping HTML extraction"
-    fi
-
-    # Step 2: Wiki
-    if [[ "$SKIP_WIKI" == "false" ]]; then
-        echo ""
-        print_header "Step 2/4: Wikipedia Extraction"
-        if [[ -n "${WIKI_MAX_PAGES}" ]]; then
-            cmd_wiki --wiki-max-pages "${WIKI_MAX_PAGES}"
-        else
-            cmd_wiki
-        fi
-    else
-        print_warning "Skipping Wikipedia extraction"
-    fi
-
-    # Step 3: Join
-    if [[ "$SKIP_JOIN" == "false" ]]; then
-        echo ""
-        print_header "Step 3/4: Entity-Wiki Join"
-        cmd_join
-    else
-        print_warning "Skipping entity-wiki join"
-    fi
-
-    # Step 4: Lucene
-    if [[ "$SKIP_LUCENE" == "false" ]]; then
-        echo ""
-        print_header "Step 4/4: Lucene Index Build"
-        cmd_lucene_build
-    else
-        print_warning "Skipping Lucene index build"
-    fi
-
-    echo ""
-    print_success "Pipeline completed successfully!"
-}
-
-# =============================================================================
 # Main Entry Point
 # =============================================================================
 
@@ -1156,9 +1019,6 @@ main() {
             ;;
         lucene-compare)
             cmd_lucene_compare "$@"
-            ;;
-        pipeline)
-            cmd_pipeline "$@"
             ;;
         stats)
             cmd_stats "$@"

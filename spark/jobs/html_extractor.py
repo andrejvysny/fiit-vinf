@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, List, Optional, Sequence, Tuple
 
-import pandas as pd
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
@@ -318,7 +317,7 @@ def process_partition_pandas(
                 stats['files_processed'] += 1
 
     # Yield stats as DataFrame
-    yield pd.DataFrame([stats])
+    yield [stats]
 
 
 def run_spark_job_dataframe(

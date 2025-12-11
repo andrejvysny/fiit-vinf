@@ -1,18 +1,18 @@
 {
-  "generated_at": "2025-12-11T08:47:31.482177",
+  "generated_at": "2025-12-11T10:31:29.565276",
   "stages": {
     "wiki_extraction": {
-      "status": "error",
-      "duration_seconds": 4.16,
-      "run_id": "20251211_082422",
-      "start_time": "2025-12-11T08:24:22.193831",
-      "end_time": "2025-12-11T08:24:26.354368",
-      "pages_processed": 0,
-      "categories": 0,
-      "links": 0,
-      "infobox_fields": 0,
-      "abstracts": 0,
-      "aliases": 0,
+      "status": "completed",
+      "duration_seconds": 21.44,
+      "run_id": "20251211_103108",
+      "start_time": "2025-12-11T10:31:08.122900",
+      "end_time": "2025-12-11T10:31:29.563341",
+      "pages_processed": 9913,
+      "categories": 66318,
+      "links": 1780735,
+      "infobox_fields": 53440,
+      "abstracts": 6308,
+      "aliases": 2446,
       "text_files": 0
     },
     "html_extraction": {
@@ -79,12 +79,12 @@
     }
   },
   "totals": {
-    "total_duration_seconds": 7.29,
+    "total_duration_seconds": 24.57,
     "total_entities_extracted": 10130,
-    "total_wiki_pages": 0,
+    "total_wiki_pages": 9913,
     "total_html_files": 30,
     "total_joins": 111,
-    "overall_status": "error",
+    "overall_status": "completed",
     "total_docs_indexed": 28353
   }
 }

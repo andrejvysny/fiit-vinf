@@ -651,15 +651,34 @@ Record top 5 results.
 
 ---
 
+## Query additional:
+
+site:github.com python webscraping framework
+
+1. https://github.com/scrapy/scrapy
+2. https://github.com/topics/web-scraping-python
+3. https://github.com/lorien/grab
+4. https://github.com/luminati-io/Python-scraping-libraries
+5. https://github.com/luminati-io/Python-web-scraping
+
+
+Direct Github.com
+
+1.
+2.
+3.
+4.
+5.
+
 ## Query 2: "machine learning"
 
 | Rank | Our Result (Lucene) | Google (site:github.com) | GitHub Search |
 |------|---------------------|--------------------------|---------------|
-| 1 | | | |
-| 2 | | | |
-| 3 | | | |
-| 4 | | | |
-| 5 | | | |
+| 1 | |https://github.com/topics/machine-learning | |
+| 2 | |https://github.com/mikeroyal/Machine-Learning-Guide | |
+| 3 | |https://github.com/microsoft/ML-For-Beginners | |
+| 4 | |https://github.com/josephmisiti/awesome-machine-learning | |
+| 5 | |https://github.com/harvard-edge/cs249r_book | |
 
 **Analysis**:
 - ...
@@ -685,11 +704,11 @@ Record top 5 results.
 
 | Rank | Our Result (Lucene) | Google (site:github.com) | GitHub Search |
 |------|---------------------|--------------------------|---------------|
-| 1 | | | |
-| 2 | | | |
-| 3 | | | |
-| 4 | | | |
-| 5 | | | |
+| 1 | | https://github.com/typescript-cheatsheets/react| |
+| 2 | | https://github.com/topics/react-typescript| |
+| 3 | | https://github.com/academind/react-typescript-course-resources| |
+| 4 | | https://github.com/total-typescript/react-typescript-tutorial| |
+| 5 | | https://github.com/piotrwitek/react-redux-typescript-guide| |
 
 **Analysis**:
 - ...

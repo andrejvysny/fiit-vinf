@@ -1,0 +1,138 @@
+➜  vinf git:(master) ✗ SPARK_NETWORK_TIMEOUT=600s SPARK_EXECUTOR_HEARTBEAT_INTERVAL=30s bin/cli wiki --partitions 256 --force --no-text --max-wiki-pages 100000
+========================================
+Spark Wikipedia Extraction
+========================================
+Driver Memory: 12g
+Executor Memory: 6g
+Partitions: 256
+Max Pages: 100000
+
+WARN[0000] Found orphan containers ([vinf-spark-wiki-run-46e7edbac1f4 vinf-spark-wiki-run-3c5e2aadcfd3 vinf-spark-wiki-run-810934c5934a vinf-spark-wiki-run-9198626ddc8b]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up. 
+++ id -u
++ myuid=0
+++ id -g
++ mygid=0
++ set +e
+++ getent passwd 0
++ uidentry=root:x:0:0:root:/root:/bin/bash
++ set -e
++ '[' -z root:x:0:0:root:/root:/bin/bash ']'
++ '[' -z /opt/java/openjdk ']'
++ SPARK_CLASSPATH=':/opt/spark/jars/*'
++ env
++ grep SPARK_JAVA_OPT_
++ sort -t_ -k4 -n
++ sed 's/[^=]*=\(.*\)/\1/g'
+++ command -v readarray
++ '[' readarray ']'
++ readarray -t SPARK_EXECUTOR_JAVA_OPTS
++ '[' -n '' ']'
++ '[' -z x ']'
++ export PYSPARK_PYTHON
++ '[' -z ']'
++ '[' -n '' ']'
++ '[' -z ']'
++ '[' -z ']'
++ '[' -z x ']'
++ SPARK_CLASSPATH='/opt/spark/conf::/opt/spark/jars/*'
++ case "$1" in
++ echo 'Non-spark-on-k8s command provided, proceeding in pass-through mode...'
+Non-spark-on-k8s command provided, proceeding in pass-through mode...
++ CMD=("$@")
++ exec /usr/bin/tini -s -- bash -c 'pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+/opt/spark/bin/spark-submit \
+  --master local[*] \
+  --driver-memory ${SPARK_DRIVER_MEMORY:-8g} \
+  --executor-memory ${SPARK_EXECUTOR_MEMORY:-4g} \
+  --conf spark.driver.maxResultSize=${SPARK_MAX_RESULT_SIZE:-2g} \
+  --conf spark.sql.adaptive.enabled=true \
+  --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+  --conf spark.sql.shuffle.partitions=${PARTITIONS:-256} \
+  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+  --conf spark.kryoserializer.buffer.max=512m \
+  --conf spark.memory.fraction=0.8 \
+  --conf spark.memory.storageFraction=0.3 \
+  --conf spark.memory.offHeap.enabled=true \
+  --conf spark.memory.offHeap.size=2g \
+  --conf spark.local.dir=/tmp/spark \
+  /opt/app/spark/jobs/wiki_extractor.py \
+    --wiki-in /opt/app/wiki_dump \
+    --out /opt/app/workspace/store/wiki \
+    --log /opt/app/logs/wiki_extract.jsonl \
+    --partitions ${PARTITIONS:-256} \
+    ${WIKI_ARGS:-}
+'
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+2025-12-11 10:37:44,499 [INFO] Found 1 dump file(s)
+2025-12-11 10:37:44,500 [INFO] Processing: /opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml (111.5 GB)
+2025-12-11 10:37:44,500 [INFO] Using Spark DataFrame API for extraction
+25/12/11 10:37:44 INFO SparkContext: Running Spark version 3.4.0
+25/12/11 10:37:44 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+25/12/11 10:37:44 WARN SparkConf: Note that spark.local.dir will be overridden by the value set by the cluster manager (via SPARK_LOCAL_DIRS in mesos/standalone/kubernetes and LOCAL_DIRS in YARN).
+25/12/11 10:37:44 INFO ResourceUtils: ==============================================================
+25/12/11 10:37:44 INFO ResourceUtils: No custom resources configured for spark.driver.
+25/12/11 10:37:44 INFO ResourceUtils: ==============================================================
+25/12/11 10:37:44 INFO SparkContext: Submitted application: WikiExtractor-DataFrame
+25/12/11 10:37:44 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(cores -> name: cores, amount: 1, script: , vendor: , memory -> name: memory, amount: 6144, script: , vendor: , offHeap -> name: offHeap, amount: 2048, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+25/12/11 10:37:44 INFO ResourceProfile: Limiting resource is cpu
+25/12/11 10:37:44 INFO ResourceProfileManager: Added ResourceProfile id: 0
+25/12/11 10:37:44 INFO SecurityManager: Changing view acls to: root
+25/12/11 10:37:44 INFO SecurityManager: Changing modify acls to: root
+25/12/11 10:37:44 INFO SecurityManager: Changing view acls groups to: 
+25/12/11 10:37:44 INFO SecurityManager: Changing modify acls groups to: 
+25/12/11 10:37:44 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: root; groups with view permissions: EMPTY; users with modify permissions: root; groups with modify permissions: EMPTY
+25/12/11 10:37:45 INFO Utils: Successfully started service 'sparkDriver' on port 38245.
+25/12/11 10:37:45 INFO SparkEnv: Registering MapOutputTracker
+25/12/11 10:37:45 INFO SparkEnv: Registering BlockManagerMaster
+25/12/11 10:37:45 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+25/12/11 10:37:45 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+25/12/11 10:37:45 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+25/12/11 10:37:45 INFO DiskBlockManager: Created local directory at /tmp/spark/blockmgr-f1bd6973-c568-44d7-a26f-5cb84cdfd709
+25/12/11 10:37:45 INFO MemoryStore: MemoryStore started with capacity 11.4 GiB
+25/12/11 10:37:45 INFO SparkEnv: Registering OutputCommitCoordinator
+25/12/11 10:37:45 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+25/12/11 10:37:45 INFO Utils: Successfully started service 'SparkUI' on port 4040.
+25/12/11 10:37:45 INFO Executor: Starting executor ID driver on host b1516e06742c
+25/12/11 10:37:45 INFO Executor: Starting executor with user classpath (userClassPathFirst = false): ''
+25/12/11 10:37:45 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 46437.
+25/12/11 10:37:45 INFO NettyBlockTransferService: Server created on b1516e06742c:46437
+25/12/11 10:37:45 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+25/12/11 10:37:45 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, b1516e06742c, 46437, None)
+25/12/11 10:37:45 INFO BlockManagerMasterEndpoint: Registering block manager b1516e06742c:46437 with 11.4 GiB RAM, BlockManagerId(driver, b1516e06742c, 46437, None)
+25/12/11 10:37:45 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, b1516e06742c, 46437, None)
+25/12/11 10:37:45 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, b1516e06742c, 46437, None)
+2025-12-11 10:37:45,699 [INFO] Starting Spark progress reporter (45s heartbeat) for long-running stages...
+2025-12-11 10:37:45,699 [INFO] Reading dump file: /opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml
+2025-12-11 10:37:45,699 [INFO] Large file detected (111.5GB), using 256 partitions
+2025-12-11 10:37:48,187 [INFO] Keeping reader partitions: 831
+2025-12-11 10:37:48,303 [INFO] Persisting up to 100000 pages with MEMORY_AND_DISK...
+2025-12-11 10:37:48,303 [INFO] This allows spilling to disk when memory is full (OOM-safe)
+2025-12-11 10:37:48,355 [INFO] Extracting structured data (DataFrame API)...
+2025-12-11 10:37:48,356 [INFO] Full text extraction DISABLED
+2025-12-11 10:37:48,690 [INFO] Writing output files (streaming mode - no full materialization)...
+2025-12-11 10:37:49,474 [INFO] Writing pages.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:38:30,786 [INFO] [wiki-extraction] Active Spark stages -> 0 (javaToPython at <unknown>:0): 583/831 done, active=15, failed=0
+2025-12-11 10:38:59,259 [INFO] Wrote 77705 pages to /opt/app/workspace/store/wiki/pages.tsv
+2025-12-11 10:38:59,486 [INFO] Writing categories.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:39:10,759 [INFO] Wrote categories to /opt/app/workspace/store/wiki/categories.tsv
+2025-12-11 10:39:10,841 [INFO] Writing links.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:39:15,799 [INFO] [wiki-extraction] Active Spark stages -> 10 (csv at <unknown>:0): 0/1 done, active=0, failed=0
+2025-12-11 10:39:23,571 [INFO] Wrote links to /opt/app/workspace/store/wiki/links.tsv
+2025-12-11 10:39:23,788 [INFO] Writing infobox.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:39:35,167 [INFO] Wrote infobox to /opt/app/workspace/store/wiki/infobox.tsv
+2025-12-11 10:39:35,276 [INFO] Writing abstract.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:39:46,257 [INFO] Wrote abstracts to /opt/app/workspace/store/wiki/abstract.tsv
+2025-12-11 10:39:46,321 [INFO] Writing aliases.tsv with 1 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:39:57,114 [INFO] Wrote aliases to /opt/app/workspace/store/wiki/aliases.tsv
+2025-12-11 10:39:57,116 [INFO] Cleaning up persisted data...
+2025-12-11 10:39:57,133 [INFO] ============================================================
+2025-12-11 10:39:57,133 [INFO] WIKIPEDIA EXTRACTION COMPLETE (DataFrame API)
+2025-12-11 10:39:57,133 [INFO] Duration: 132.62 seconds
+2025-12-11 10:39:57,133 [INFO] Pages processed: 77705
+2025-12-11 10:39:57,133 [INFO] Outputs written: 6
+2025-12-11 10:39:57,133 [INFO] Manifest: runs/20251211_103957/manifest.json
+2025-12-11 10:39:57,133 [INFO] ============================================================
+2025-12-11 10:39:57,133 [INFO] Closing down clientserver connection
+2025-12-11 10:39:57,963 [INFO] Closing down clientserver connection
+✓ Wikipedia extraction completed
+➜  vinf git:(master) ✗ 

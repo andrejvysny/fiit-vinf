@@ -1,26 +1,26 @@
 # VINF Pipeline Statistics Report
 
-**Generated:** 2025-12-11T08:47:31.482919
-**Overall Status:** error
-**Total Duration:** 7.29 seconds
+**Generated:** 2025-12-11T10:31:29.566110
+**Overall Status:** completed
+**Total Duration:** 24.57 seconds
 
 ---
 
 ## 1. Wikipedia Extraction
 
-- **Status:** error
-- **Duration:** 4.16 seconds
-- **Pages Processed:** 0
+- **Status:** completed
+- **Duration:** 21.44 seconds
+- **Pages Processed:** 9,913
 
 ### Entities Extracted:
 
 | Entity Type | Count |
 |-------------|-------|
-| Categories | 0 |
-| Links | 0 |
-| Infobox Fields | 0 |
-| Abstracts | 0 |
-| Aliases | 0 |
+| Categories | 66,318 |
+| Links | 1,780,735 |
+| Infobox Fields | 53,440 |
+| Abstracts | 6,308 |
+| Aliases | 2,446 |
 | Text Files | 0 |
 
 ## 2. HTML Extraction
@@ -47,8 +47,8 @@
 
 | Metric | Value |
 |--------|-------|
-| Total Duration | 7.29s |
-| Wiki Pages Processed | 0 |
+| Total Duration | 24.57s |
+| Wiki Pages Processed | 9,913 |
 | HTML Files Processed | 30 |
 | Total Entities Extracted | 10,130 |
 | Total Joins | 111 |

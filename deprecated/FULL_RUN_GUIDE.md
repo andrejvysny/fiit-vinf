@@ -36,22 +36,14 @@ workspace/source/html/
 
 Or use the existing scraped GitHub pages if available.
 
-## Step 2: Run Full Pipeline
-
-### Option A: Run Everything at Once
-
-```bash
-bin/cli pipeline
-```
-
-### Option B: Run Steps Individually
+## Step 2: Run All Stages Manually
 
 ```bash
 # 1. Extract entities from HTML files
 bin/cli extract
 
-# 2. Process Wikipedia dump (full - no page limit)
-bin/cli wiki --wiki-max-pages 0
+# 2. Process Wikipedia dump (preconfigured Spark settings)
+bin/cli wiki
 
 # 3. Join HTML entities with Wikipedia
 bin/cli join
@@ -233,8 +225,8 @@ bin/cli lucene-compare
 
 ```bash
 # Process in batches
-bin/cli wiki --wiki-max-pages 10000  # First 10k pages
-bin/cli wiki --wiki-max-pages 50000  # More pages
+bin/cli wiki --sample 10000  # First 10k pages
+bin/cli wiki --sample 50000  # More pages
 ```
 
 ### Index Build Fails

@@ -53,3 +53,5 @@
 {"ts": 1765443354.1193357, "event": "start", "entities": "/opt/app/workspace/store/spark/entities/entities.tsv", "wiki": "/opt/app/workspace/store/wiki", "out": "/opt/app/workspace/store/join"}
 {"ts": 1765443359.3020208, "event": "entities_loaded", "path": "/opt/app/workspace/store/spark/entities/entities.tsv"}
 {"ts": 1765443363.4675581, "event": "normalization", "entities_seen": 12414, "empty_norm_values": 48, "entities_used": 12366}
+{"ts": 1765451856.9005861, "event": "start", "entities": "/opt/app/workspace/store/spark/entities/entities.tsv", "wiki": "/opt/app/workspace/store/wiki", "out": "/opt/app/workspace/store/join"}
+{"ts": 1765451862.9776394, "event": "entities_loaded", "path": "/opt/app/workspace/store/spark/entities/entities.tsv"}

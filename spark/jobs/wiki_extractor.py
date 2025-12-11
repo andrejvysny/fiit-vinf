@@ -49,7 +49,7 @@ from spark.lib.wiki_regexes import (
     extract_abstract,
     clean_wikitext_to_plaintext,
 )
-from spark.lib.io import write_tsv, write_ndjson
+from spark.lib.io import write_tsv, write_ndjson, merge_part_files
 from spark.lib.stats import PipelineStats, save_pipeline_summary
 from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
 from spark.lib.progress import SparkProgressReporter, JobGroup
@@ -74,6 +74,12 @@ def parse_args() -> argparse.Namespace:
         '--wiki-max-pages',
         type=int,
         help='Maximum number of pages to process (for development)'
+    )
+    parser.add_argument(
+        '--max-wiki-pages',
+        dest='wiki_max_pages',
+        type=int,
+        help='Alias for --wiki-max-pages'
     )
     parser.add_argument(
         '--partitions',
@@ -126,10 +132,32 @@ def parse_args() -> argparse.Namespace:
         help='Write single TSV per output (slower and shuffle-heavy for big dumps). Default writes multi-part outputs.'
     )
     parser.add_argument(
+        '--merge-output',
+        action='store_true',
+        help='(Default behavior) Write parts in parallel then merge into single file. '
+             'This flag is kept for backwards compatibility but merge is now always enabled unless --no-merge is used.'
+    )
+    parser.add_argument(
+        '--no-merge',
+        action='store_true',
+        help='Disable merge: output will be directories with part files instead of single merged files. '
+             'Use this for very large datasets where post-merge I/O is too slow.'
+    )
+    parser.add_argument(
         '--max-records-per-file',
         type=int,
         default=2_000_000,
         help='Limit records per output part when not coalescing (helps with very large outputs).'
+    )
+    parser.add_argument(
+        '--stage-dir',
+        help='Optional staging directory inside the container (e.g., /tmp/wiki_stage). '
+             'Results will be copied to --out after completion. Useful on macOS to avoid slow bind-mount writes.'
+    )
+    parser.add_argument(
+        '--force',
+        action='store_true',
+        help='Force overwrite by cleaning output directory before running.'
     )
     return parser.parse_args()
 
@@ -573,7 +601,9 @@ def process_pages_dataframe(pages_df: DataFrame, extract_full_text: bool = True)
     Returns tuple of DataFrames: (pages, categories, links, infobox, abstracts, aliases, text_metadata?)
     """
     import hashlib
+    log = logging.getLogger(__name__)
 
+    log.info("Registering UDFs for XML parsing...")
     # Register UDFs for complex parsing operations
     extract_page_udf = F.udf(extract_page_xml, MapType(StringType(), StringType()))
     normalize_title_udf = F.udf(normalize_title, StringType())
@@ -609,6 +639,15 @@ def process_pages_dataframe(pages_df: DataFrame, extract_full_text: bool = True)
         (F.col("ns") == 0) | F.col("redirect_to").isNotNull()
     )
 
+    # CRITICAL: Persist pages_with_text to avoid re-running extract_page_udf
+    # for each of the 6 output DataFrames. Without this, the expensive XML parsing
+    # UDF runs 6 times per page (36M calls instead of 6M for full dump).
+    # Use DISK_ONLY to stream through disk without RAM pressure.
+    log.info("Persisting parsed pages (pages_with_text) with DISK_ONLY...")
+    log.info("This avoids re-running XML parsing UDF for each of the 6 output DataFrames")
+    pages_with_text = pages_with_text.persist(StorageLevel.DISK_ONLY)
+
+    log.info("Building lazy DataFrame transformations for 6 output types...")
     # 1. Pages metadata
     pages_meta_df = pages_with_text.select(
         "page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"
@@ -738,7 +777,27 @@ def main() -> int:
     # Paths
     input_dir = Path(args.wiki_in)
     output_dir = Path(args.out)
+    stage_dir = Path(args.stage_dir) if args.stage_dir else output_dir
+
+    def clean_dir_contents(path: Path) -> None:
+        if not path.exists():
+            return
+        for child in path.iterdir():
+            try:
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+            except Exception as cleanup_err:
+                logger.warning(f"Force cleanup warning for {child}: {cleanup_err}")
+
+    if args.force:
+        clean_dir_contents(output_dir)
+        if stage_dir != output_dir:
+            clean_dir_contents(stage_dir)
+
     output_dir.mkdir(parents=True, exist_ok=True)
+    stage_dir.mkdir(parents=True, exist_ok=True)
 
     # Find dump files
     dump_files = find_wiki_dumps(input_dir, args.prefer_uncompressed)
@@ -883,35 +942,67 @@ def main() -> int:
     # Use Spark for large extractions
     logger.info("Using Spark DataFrame API for extraction")
 
+    is_full_extraction = args.wiki_max_pages is None
+
+    # Determine output merge strategy:
+    # Default: merge (write parts in parallel, then merge into single files)
+    # This is the recommended approach per Spark docs - avoids coalesce(1) bottleneck
+    # User can disable with --no-merge to get directory with part files
+    if args.no_merge:
+        use_merge = False
+        logger.info("Output mode: PARTITIONED (directory with part files)")
+    else:
+        use_merge = True
+        logger.info("Output mode: MERGE (write parts in parallel, then merge into single files)")
+        logger.info("Reference: https://spark.apache.org/docs/latest/sql-data-sources-csv.html")
+
     # Create Spark session with DataFrame-optimized configuration
     # For large dumps, avoid false executor loss by lengthening heartbeat/network timeouts.
     heartbeat_interval = os.environ.get("SPARK_EXECUTOR_HEARTBEAT_INTERVAL", "30s")
     network_timeout = os.environ.get("SPARK_NETWORK_TIMEOUT", "600s")
+
+    # Python worker memory - critical for UDF-heavy workloads
+    # Default 512m is too low for XML parsing UDFs processing large partitions
+    python_worker_memory = os.environ.get("SPARK_PYTHON_WORKER_MEMORY", "1g")
+
     spark_builder = SparkSession.builder \
         .appName("WikiExtractor-DataFrame") \
         .master("local[*]") \
         .config("spark.driver.memory", os.environ.get('SPARK_DRIVER_MEMORY', '8g')) \
         .config("spark.executor.memory", os.environ.get('SPARK_EXECUTOR_MEMORY', '4g')) \
         .config("spark.sql.adaptive.enabled", "true") \
-        .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "false" if is_full_extraction else "true") \
         .config("spark.driver.maxResultSize", "4g") \
-        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
         .config("spark.sql.shuffle.partitions", str(args.partitions)) \
         .config("spark.executor.heartbeatInterval", heartbeat_interval) \
-        .config("spark.network.timeout", network_timeout)
+        .config("spark.network.timeout", network_timeout) \
+        .config("spark.python.worker.memory", python_worker_memory) \
+        .config("spark.python.worker.reuse", "true")
 
     file_size_gb = dump_file.stat().st_size / 1e9
     if file_size_gb > 50:
+        # For large files: optimize memory and disable features that can cause OOM
+        logger.info(f"Large file detected ({file_size_gb:.1f}GB) - applying memory optimizations")
         spark_builder = spark_builder \
             .config("spark.memory.fraction", "0.8") \
             .config("spark.memory.storageFraction", "0.3") \
-            .config("spark.sql.autoBroadcastJoinThreshold", "-1")
+            .config("spark.sql.autoBroadcastJoinThreshold", "-1") \
+            .config("spark.sql.execution.arrow.pyspark.enabled", "false")
 
     spark = spark_builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
-    progress = SparkProgressReporter(spark, logger, interval=45.0)
-    logger.info("Starting Spark progress reporter (45s heartbeat) for long-running stages...")
+
+    # Use shorter progress interval for full extraction (can take hours)
+    progress_interval = 30.0 if is_full_extraction else 45.0
+    progress = SparkProgressReporter(spark, logger, interval=progress_interval)
+    if is_full_extraction:
+        logger.info("=" * 60)
+        logger.info("FULL WIKIPEDIA EXTRACTION - This may take several hours!")
+        logger.info(f"Input: {dump_file} ({dump_file.stat().st_size / 1e9:.1f} GB)")
+        logger.info("Progress will be logged every 30 seconds")
+        logger.info("=" * 60)
+    else:
+        logger.info(f"Starting progress reporter ({progress_interval}s interval)...")
     progress.start("wiki-extraction")
 
     try:
@@ -927,15 +1018,17 @@ def main() -> int:
             spark, dump_file, args.wiki_max_pages, effective_partitions
         )
 
-        # Use MEMORY_AND_DISK persistence to avoid OOM errors
-        # This spills to disk when memory is full
+        # CRITICAL FIX: Always persist pages_df to avoid re-scanning source file
+        # Without persistence, each output DataFrame triggers a FULL re-read of source:
+        # - 111.5GB × 6 outputs = 670GB+ I/O for full extraction!
+        # - Plus 6M × 6 = 36M redundant UDF calls!
+        #
+        # Use DISK_ONLY to avoid RAM pressure - all data streams through disk.
         # Reference: https://spark.apache.org/docs/latest/tuning.html
-        if args.wiki_max_pages:
-            logger.info(f"Persisting up to {args.wiki_max_pages} pages with MEMORY_AND_DISK...")
-            logger.info("This allows spilling to disk when memory is full (OOM-safe)")
-            pages_df = pages_df.persist(StorageLevel.MEMORY_AND_DISK)
-            # Note: We don't call count() here to avoid forcing full materialization
-            # The data will be materialized lazily during processing
+        run_desc = f"{args.wiki_max_pages} pages" if args.wiki_max_pages else "FULL dump (~6M pages)"
+        logger.info(f"Persisting extracted pages ({run_desc}) with DISK_ONLY...")
+        logger.info("Using disk-only streaming to avoid RAM pressure on large datasets")
+        pages_df = pages_df.persist(StorageLevel.DISK_ONLY)
 
         # Process pages using DataFrame operations
         logger.info("Extracting structured data (DataFrame API)...")
@@ -949,17 +1042,34 @@ def main() -> int:
              infobox_df, abstracts_df, aliases_df) = process_pages_dataframe(pages_df, extract_full_text=False)
 
         # Write outputs - using streaming writes without forcing full materialization
+        # Note: pages_df and pages_with_text are already persisted with DISK_ONLY
         # Reference: https://spark.apache.org/docs/latest/tuning.html (avoid collect/count)
-        logger.info("Writing output files (streaming mode - no full materialization)...")
+        logger.info("Writing output files (streaming from DISK_ONLY cache)...")
+        logger.info("Each output will read from persisted pages_with_text, not re-scan source")
 
-        # Pages metadata - write directly without count() to avoid OOM
-        # Use DISK_ONLY persistence if needed for reuse
+        # Pages metadata - persist separately for count() after write
         pages_meta_df = pages_meta_df.persist(StorageLevel.DISK_ONLY)
 
-        pages_path = output_dir / "pages.tsv"
+        # Cap output partitions - but NOT for full extraction to avoid memory pressure
+        # Coalescing causes each output task to process multiple input partitions,
+        # which can cause Python worker OOM on large datasets
+        def cap_partitions(df: DataFrame, cap: int = 128) -> DataFrame:
+            if is_full_extraction:
+                return df
+            current = df.rdd.getNumPartitions()
+            target = min(cap, current)
+            if target < current:
+                logger.info(f"Coalescing output partitions: {current} -> {target}")
+                return df.coalesce(target)
+            return df
+
+        # Coalesce all outputs to a manageable number of files
+        pages_meta_df = cap_partitions(pages_meta_df)
+
+        pages_path = stage_dir / "pages.tsv"
         logger.info(
             f"Writing pages.tsv with {pages_meta_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write pages.tsv"):
             write_tsv(
@@ -968,17 +1078,19 @@ def main() -> int:
                 ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         # Get count after write (data already on disk, safe to count)
         pages_count = pages_meta_df.count()
         logger.info(f"Wrote {pages_count} pages to {pages_path}")
 
         # Categories
-        categories_path = output_dir / "categories.tsv"
+        categories_path = stage_dir / "categories.tsv"
+        categories_df = cap_partitions(categories_df)
         logger.info(
             f"Writing categories.tsv with {categories_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write categories.tsv"):
             write_tsv(
@@ -987,15 +1099,17 @@ def main() -> int:
                 ["page_id", "category", "norm_category"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         logger.info(f"Wrote categories to {categories_path}")
 
         # Links
-        links_path = output_dir / "links.tsv"
+        links_path = stage_dir / "links.tsv"
+        links_df = cap_partitions(links_df)
         logger.info(
             f"Writing links.tsv with {links_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write links.tsv"):
             write_tsv(
@@ -1004,15 +1118,17 @@ def main() -> int:
                 ["page_id", "link_title", "norm_link_title"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         logger.info(f"Wrote links to {links_path}")
 
         # Infobox
-        infobox_path = output_dir / "infobox.tsv"
+        infobox_path = stage_dir / "infobox.tsv"
+        infobox_df = cap_partitions(infobox_df)
         logger.info(
             f"Writing infobox.tsv with {infobox_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write infobox.tsv"):
             write_tsv(
@@ -1021,15 +1137,17 @@ def main() -> int:
                 ["page_id", "key", "value"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         logger.info(f"Wrote infobox to {infobox_path}")
 
         # Abstracts
-        abstracts_path = output_dir / "abstract.tsv"
+        abstracts_path = stage_dir / "abstract.tsv"
+        abstracts_df = cap_partitions(abstracts_df)
         logger.info(
             f"Writing abstract.tsv with {abstracts_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write abstract.tsv"):
             write_tsv(
@@ -1038,15 +1156,17 @@ def main() -> int:
                 ["page_id", "abstract_text"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         logger.info(f"Wrote abstracts to {abstracts_path}")
 
         # Aliases
-        aliases_path = output_dir / "aliases.tsv"
+        aliases_path = stage_dir / "aliases.tsv"
+        aliases_df = cap_partitions(aliases_df)
         logger.info(
             f"Writing aliases.tsv with {aliases_df.rdd.getNumPartitions()} partitions "
-            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+            f"(merge={use_merge}, single_file={args.coalesce_output})"
         )
         with JobGroup(spark, "Write aliases.tsv"):
             write_tsv(
@@ -1055,7 +1175,8 @@ def main() -> int:
                 ["alias_norm_title", "canonical_norm_title"],
                 header=True,
                 single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
+                max_records_per_file=args.max_records_per_file,
+                merge_after_write=use_merge
             )
         logger.info(f"Wrote aliases to {aliases_path}")
 
@@ -1113,7 +1234,7 @@ def main() -> int:
             text_metadata_path = output_dir / "wiki_text_metadata.tsv"
             logger.info(
                 f"Writing wiki_text_metadata.tsv with {text_metadata_df.rdd.getNumPartitions()} partitions "
-                f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+                f"(merge={use_merge}, single_file={args.coalesce_output})"
             )
             with JobGroup(spark, "Write text metadata"):
                 write_tsv(
@@ -1122,7 +1243,8 @@ def main() -> int:
                     ["page_id", "title", "content_sha256", "content_length", "timestamp"],
                     header=True,
                     single_file=args.coalesce_output,
-                    max_records_per_file=args.max_records_per_file
+                    max_records_per_file=args.max_records_per_file,
+                    merge_after_write=use_merge
                 )
 
             # Get counts AFTER writing (data is on disk now, safe to count)
@@ -1155,12 +1277,12 @@ def main() -> int:
             "input_size_gb": round(dump_file.stat().st_size / 1e9, 2),
             "max_pages": args.wiki_max_pages,
             "outputs": {
-                "pages": str(pages_path),
-                "categories": str(categories_path),
-                "links": str(links_path),
-                "infobox": str(infobox_path),
-                "abstracts": str(abstracts_path),
-                "aliases": str(aliases_path),
+                "pages": str(output_dir / "pages.tsv"),
+                "categories": str(output_dir / "categories.tsv"),
+                "links": str(output_dir / "links.tsv"),
+                "infobox": str(output_dir / "infobox.tsv"),
+                "abstracts": str(output_dir / "abstract.tsv"),
+                "aliases": str(output_dir / "aliases.tsv"),
             },
             "stats": stats,
             "spark_config": {
@@ -1175,8 +1297,8 @@ def main() -> int:
         }
 
         if extract_text:
-            manifest["outputs"]["text_metadata"] = str(text_metadata_path)
-            manifest["outputs"]["text_directory"] = str(text_dir)
+            manifest["outputs"]["text_metadata"] = str(output_dir / "wiki_text_metadata.tsv")
+            manifest["outputs"]["text_directory"] = str(output_dir / "text")
 
         runs_dir = Path('runs') / datetime.now().strftime('%Y%m%d_%H%M%S')
         runs_dir.mkdir(parents=True, exist_ok=True)
@@ -1185,11 +1307,25 @@ def main() -> int:
 
         struct_logger.log("complete", duration=duration, stats=stats)
 
+        # If staging was used, copy outputs to the final output_dir (host mount) once.
+        if stage_dir != output_dir:
+            logger.info(f"Staged output in {stage_dir}, copying to final {output_dir} ...")
+            clean_dir_contents(output_dir)
+            for item in stage_dir.iterdir():
+                target = output_dir / item.name
+                if item.is_dir():
+                    shutil.copytree(item, target)
+                else:
+                    shutil.copy2(item, target)
+            logger.info("Copy from staging to final output complete.")
+
         # Clean up persisted DataFrames to free disk/memory
         logger.info("Cleaning up persisted data...")
         try:
             pages_df.unpersist()
             pages_meta_df.unpersist()
+            if 'pages_with_text' in locals():
+                pages_with_text.unpersist()
             if extract_text:
                 text_metadata_df.unpersist()
                 unique_texts_df.unpersist()

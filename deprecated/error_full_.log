@@ -1,0 +1,1892 @@
+Last login: Thu Dec 11 11:27:09 on ttys001
+➜  vinf git:(master) ✗ SPARK_DRIVER_MEMORY=14g SPARK_EXECUTOR_MEMORY=8g SPARK_MAX_RESULT_SIZE=4g SPARK_NETWORK_TIMEOUT=1200s SPARK_EXECUTOR_HEARTBEAT_INTERVAL=60s
+  CONTAINER_MEMORY_LIMIT=20g PARTITIONS=256 bin/cli wiki --no-text --force
+========================================
+Spark Wikipedia Extraction
+========================================
+Driver Memory: 12g
+Executor Memory: 6g
+Partitions: 256
+
+WARN[0000] Found orphan containers ([vinf-spark-wiki-run-112ac23e112a vinf-spark-wiki-run-6527481d96ae vinf-spark-wiki-run-46e7edbac1f4 vinf-spark-wiki-run-3c5e2aadcfd3 vinf-spark-wiki-run-810934c5934a vinf-spark-wiki-run-9198626ddc8b]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up. 
+++ id -u
++ myuid=0
+++ id -g
++ mygid=0
++ set +e
+++ getent passwd 0
++ uidentry=root:x:0:0:root:/root:/bin/bash
++ set -e
++ '[' -z root:x:0:0:root:/root:/bin/bash ']'
++ '[' -z /opt/java/openjdk ']'
++ SPARK_CLASSPATH=':/opt/spark/jars/*'
++ env
++ grep SPARK_JAVA_OPT_
++ sort -t_ -k4 -n
++ sed 's/[^=]*=\(.*\)/\1/g'
+++ command -v readarray
++ '[' readarray ']'
++ readarray -t SPARK_EXECUTOR_JAVA_OPTS
++ '[' -n '' ']'
++ '[' -z x ']'
++ export PYSPARK_PYTHON
++ '[' -z ']'
++ '[' -n '' ']'
++ '[' -z ']'
++ '[' -z ']'
++ '[' -z x ']'
++ SPARK_CLASSPATH='/opt/spark/conf::/opt/spark/jars/*'
++ case "$1" in
++ echo 'Non-spark-on-k8s command provided, proceeding in pass-through mode...'
+Non-spark-on-k8s command provided, proceeding in pass-through mode...
++ CMD=("$@")
++ exec /usr/bin/tini -s -- bash -c 'pip install --no-cache-dir --disable-pip-version-check -q -r /opt/app/requirements.txt &&
+/opt/spark/bin/spark-submit \
+  --master local[*] \
+  --driver-memory ${SPARK_DRIVER_MEMORY:-8g} \
+  --executor-memory ${SPARK_EXECUTOR_MEMORY:-4g} \
+  --conf spark.driver.maxResultSize=${SPARK_MAX_RESULT_SIZE:-2g} \
+  --conf spark.sql.adaptive.enabled=true \
+  --conf spark.sql.adaptive.coalescePartitions.enabled=true \
+  --conf spark.sql.shuffle.partitions=${PARTITIONS:-256} \
+  --conf spark.serializer=org.apache.spark.serializer.KryoSerializer \
+  --conf spark.kryoserializer.buffer.max=512m \
+  --conf spark.memory.fraction=0.8 \
+  --conf spark.memory.storageFraction=0.3 \
+  --conf spark.memory.offHeap.enabled=true \
+  --conf spark.memory.offHeap.size=2g \
+  --conf spark.local.dir=/tmp/spark \
+  /opt/app/spark/jobs/wiki_extractor.py \
+    --wiki-in /opt/app/wiki_dump \
+    --out /opt/app/workspace/store/wiki \
+    --log /opt/app/logs/wiki_extract.jsonl \
+    --partitions ${PARTITIONS:-256} \
+    ${WIKI_ARGS:-}
+'
+WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
+2025-12-11 10:52:06,449 [INFO] Found 1 dump file(s)
+2025-12-11 10:52:06,449 [INFO] Processing: /opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml (111.5 GB)
+2025-12-11 10:52:06,449 [INFO] Using Spark DataFrame API for extraction
+25/12/11 10:52:06 INFO SparkContext: Running Spark version 3.4.0
+25/12/11 10:52:06 WARN NativeCodeLoader: Unable to load native-hadoop library for your platform... using builtin-java classes where applicable
+25/12/11 10:52:06 WARN SparkConf: Note that spark.local.dir will be overridden by the value set by the cluster manager (via SPARK_LOCAL_DIRS in mesos/standalone/kubernetes and LOCAL_DIRS in YARN).
+25/12/11 10:52:06 INFO ResourceUtils: ==============================================================
+25/12/11 10:52:06 INFO ResourceUtils: No custom resources configured for spark.driver.
+25/12/11 10:52:06 INFO ResourceUtils: ==============================================================
+25/12/11 10:52:06 INFO SparkContext: Submitted application: WikiExtractor-DataFrame
+25/12/11 10:52:06 INFO ResourceProfile: Default ResourceProfile created, executor resources: Map(cores -> name: cores, amount: 1, script: , vendor: , memory -> name: memory, amount: 6144, script: , vendor: , offHeap -> name: offHeap, amount: 2048, script: , vendor: ), task resources: Map(cpus -> name: cpus, amount: 1.0)
+25/12/11 10:52:06 INFO ResourceProfile: Limiting resource is cpu
+25/12/11 10:52:06 INFO ResourceProfileManager: Added ResourceProfile id: 0
+25/12/11 10:52:06 INFO SecurityManager: Changing view acls to: root
+25/12/11 10:52:06 INFO SecurityManager: Changing modify acls to: root
+25/12/11 10:52:06 INFO SecurityManager: Changing view acls groups to: 
+25/12/11 10:52:06 INFO SecurityManager: Changing modify acls groups to: 
+25/12/11 10:52:06 INFO SecurityManager: SecurityManager: authentication disabled; ui acls disabled; users with view permissions: root; groups with view permissions: EMPTY; users with modify permissions: root; groups with modify permissions: EMPTY
+25/12/11 10:52:07 INFO Utils: Successfully started service 'sparkDriver' on port 36995.
+25/12/11 10:52:07 INFO SparkEnv: Registering MapOutputTracker
+25/12/11 10:52:07 INFO SparkEnv: Registering BlockManagerMaster
+25/12/11 10:52:07 INFO BlockManagerMasterEndpoint: Using org.apache.spark.storage.DefaultTopologyMapper for getting topology information
+25/12/11 10:52:07 INFO BlockManagerMasterEndpoint: BlockManagerMasterEndpoint up
+25/12/11 10:52:07 INFO SparkEnv: Registering BlockManagerMasterHeartbeat
+25/12/11 10:52:07 INFO DiskBlockManager: Created local directory at /tmp/spark/blockmgr-8639d6e5-95d2-478b-8e06-c4c7c544397f
+25/12/11 10:52:07 INFO MemoryStore: MemoryStore started with capacity 11.4 GiB
+25/12/11 10:52:07 INFO SparkEnv: Registering OutputCommitCoordinator
+25/12/11 10:52:07 INFO JettyUtils: Start Jetty 0.0.0.0:4040 for SparkUI
+25/12/11 10:52:07 INFO Utils: Successfully started service 'SparkUI' on port 4040.
+25/12/11 10:52:07 INFO Executor: Starting executor ID driver on host debd2009e5d1
+25/12/11 10:52:07 INFO Executor: Starting executor with user classpath (userClassPathFirst = false): ''
+25/12/11 10:52:07 INFO Utils: Successfully started service 'org.apache.spark.network.netty.NettyBlockTransferService' on port 39645.
+25/12/11 10:52:07 INFO NettyBlockTransferService: Server created on debd2009e5d1:39645
+25/12/11 10:52:07 INFO BlockManager: Using org.apache.spark.storage.RandomBlockReplicationPolicy for block replication policy
+25/12/11 10:52:07 INFO BlockManagerMaster: Registering BlockManager BlockManagerId(driver, debd2009e5d1, 39645, None)
+25/12/11 10:52:07 INFO BlockManagerMasterEndpoint: Registering block manager debd2009e5d1:39645 with 11.4 GiB RAM, BlockManagerId(driver, debd2009e5d1, 39645, None)
+25/12/11 10:52:07 INFO BlockManagerMaster: Registered BlockManager BlockManagerId(driver, debd2009e5d1, 39645, None)
+25/12/11 10:52:07 INFO BlockManager: Initialized BlockManager: BlockManagerId(driver, debd2009e5d1, 39645, None)
+2025-12-11 10:52:07,781 [INFO] ============================================================
+2025-12-11 10:52:07,781 [INFO] FULL WIKIPEDIA EXTRACTION - This may take several hours!
+2025-12-11 10:52:07,781 [INFO] Input: /opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml (111.5 GB)
+2025-12-11 10:52:07,781 [INFO] Progress will be logged every 30 seconds
+2025-12-11 10:52:07,781 [INFO] ============================================================
+2025-12-11 10:52:07,781 [INFO] Reading dump file: /opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml
+2025-12-11 10:52:07,781 [INFO] Large file detected (111.5GB), using 256 partitions
+2025-12-11 10:52:10,462 [INFO] Keeping reader partitions: 831
+2025-12-11 10:52:10,573 [INFO] Persisting extracted pages (FULL dump (~6M pages)) with DISK_ONLY...
+2025-12-11 10:52:10,573 [INFO] Using disk-only streaming to avoid RAM pressure on large datasets
+2025-12-11 10:52:10,614 [INFO] Extracting structured data (DataFrame API)...
+2025-12-11 10:52:10,614 [INFO] Full text extraction DISABLED
+2025-12-11 10:52:10,614 [INFO] Registering UDFs for XML parsing...
+2025-12-11 10:52:10,740 [INFO] Persisting parsed pages (pages_with_text) with DISK_ONLY...
+2025-12-11 10:52:10,740 [INFO] This avoids re-running XML parsing UDF for each of the 6 output DataFrames
+2025-12-11 10:52:10,884 [INFO] Building lazy DataFrame transformations for 6 output types...
+2025-12-11 10:52:11,049 [INFO] Writing output files (streaming from DISK_ONLY cache)...
+2025-12-11 10:52:11,049 [INFO] Each output will read from persisted pages_with_text, not re-scan source
+2025-12-11 10:52:11,746 [INFO] Coalescing output partitions: 831 -> 128
+2025-12-11 10:52:11,893 [INFO] Writing pages.tsv with 128 partitions (single_file=False, max_records_per_file=2000000)
+2025-12-11 10:52:44,277 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=1, failed=0
+2025-12-11 10:53:58,214 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=1, failed=0
+2025-12-11 10:54:30,610 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:55:01,011 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:55:33,196 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:56:03,834 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:56:35,383 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:57:08,896 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:57:39,321 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 0/128 done, active=14, failed=0
+2025-12-11 10:58:09,654 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 6/128 done, active=14, failed=0
+2025-12-11 10:58:40,060 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 9/128 done, active=14, failed=0
+2025-12-11 10:59:10,471 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 10:59:40,903 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:00:11,096 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:00:42,209 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:01:15,286 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:01:45,527 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:02:16,154 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:02:46,997 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 13/128 done, active=14, failed=0
+2025-12-11 11:03:20,593 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 16/128 done, active=14, failed=0
+2025-12-11 11:03:51,103 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 18/128 done, active=14, failed=0
+2025-12-11 11:04:22,189 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 20/128 done, active=14, failed=0
+2025-12-11 11:04:52,870 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 21/128 done, active=14, failed=0
+2025-12-11 11:05:24,258 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 24/128 done, active=14, failed=0
+2025-12-11 11:05:55,596 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:06:27,008 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:06:58,056 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:07:29,181 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:08:01,953 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:08:32,710 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:09:04,518 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:09:38,370 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:10:09,053 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:10:40,110 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:11:10,575 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 25/128 done, active=14, failed=0
+2025-12-11 11:11:41,709 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 28/128 done, active=14, failed=0
+2025-12-11 11:12:14,337 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 28/128 done, active=14, failed=0
+2025-12-11 11:12:48,953 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 28/128 done, active=14, failed=0
+2025-12-11 11:13:19,240 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 31/128 done, active=14, failed=0
+2025-12-11 11:13:52,632 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 32/128 done, active=14, failed=0
+Traceback (most recent call last):
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/daemon.py", line 193, in manager
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/daemon.py", line 74, in worker
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/worker.py", line 874, in main
+    if read_int(infile) == SpecialLengths.END_OF_STREAM:
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/serializers.py", line 596, in read_int
+    raise EOFError
+EOFError
+25/12/11 11:13:57 ERROR PythonUDFRunner: Python worker exited unexpectedly (crashed)
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:13:57 ERROR PythonUDFRunner: This may have been caused by a prior exception:
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:13:59 ERROR PythonUDFRunner: Python worker exited unexpectedly (crashed)
+org.apache.spark.api.python.PythonException: Traceback (most recent call last):
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/worker.py", line 810, in main
+    eval_type = read_int(infile)
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/serializers.py", line 596, in read_int
+    raise EOFError
+EOFError
+
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.handlePythonException(PythonRunner.scala:561)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:94)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage3.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at org.apache.spark.sql.execution.columnar.DefaultCachedBatchSerializer$$anon$1.hasNext(InMemoryRelation.scala:118)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.serializer.SerializationStream.writeAll(Serializer.scala:139)
+	at org.apache.spark.serializer.SerializerManager.dataSerializeStream(SerializerManager.scala:177)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:13:59 ERROR PythonUDFRunner: This may have been caused by a prior exception:
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:13:59 WARN BlockManager: Putting block rdd_23_83 failed due to exception java.net.SocketException: Connection reset.
+25/12/11 11:13:59 WARN BlockManager: Block rdd_23_83 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:00 WARN BlockManager: Putting block rdd_28_83 failed due to exception java.net.SocketException: Connection reset.
+25/12/11 11:14:00 WARN BlockManager: Block rdd_28_83 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:00 ERROR Utils: Aborting task
+java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:14:01 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:04 ERROR Executor: Exception in task 12.0 in stage 0.0 (TID 12)
+org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:14:19 WARN TaskSetManager: Lost task 12.0 in stage 0.0 (TID 12) (debd2009e5d1 executor driver): org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+25/12/11 11:14:21 ERROR TaskSetManager: Task 12 in stage 0.0 failed 1 times; aborting job
+2025-12-11 11:14:23,860 [INFO] [wiki-extraction] Active Spark stages -> 0 (csv at <unknown>:0): 32/128 done, active=14, failed=1
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_272 failed due to exception org.apache.spark.TaskKilledException.
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_213 failed due to exception org.apache.spark.TaskKilledException.
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_245 failed due to exception org.apache.spark.TaskKilledException.
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_226 failed due to exception java.nio.channels.ClosedByInterruptException.
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_28_251 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_292 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_28_267 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_279 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_28_254 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_238 failed due to exception com.esotericsoftware.kryo.KryoException: java.nio.channels.ClosedByInterruptException
+Serialization trace:
+buffers (org.apache.spark.sql.execution.columnar.DefaultCachedBatch).
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_279 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_267 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_238 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_251 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_292 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_254 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_245 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_226 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_213 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_272 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Putting block rdd_23_285 failed due to exception org.apache.spark.TaskKilledException.
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_213 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_279 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_292 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_23_285 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_226 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_238 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_245 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_272 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_285 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:26 WARN BlockManager: Block rdd_28_260 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:26 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:27 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1584)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 39.0 in stage 0 (TID 39) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 41.0 in stage 0 (TID 41) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 40.0 in stage 0 (TID 40) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 36.0 in stage 0 (TID 36) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 34.0 in stage 0 (TID 34) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:27 WARN ArrowPythonRunner: Incomplete task 38.0 in stage 0 (TID 38) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 32.0 in stage 0 (TID 32) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN ArrowPythonRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN ArrowPythonRunner: Incomplete task 16.0 in stage 0 (TID 16) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:28 WARN PythonUDFRunner: Incomplete task 37.0 in stage 0 (TID 37) interrupted: Attempting to kill Python Worker
+25/12/11 11:14:30 WARN BlockManager: Putting block rdd_23_104 failed due to exception org.apache.spark.TaskKilledException.
+25/12/11 11:14:29 ERROR FileFormatWriter: Aborting job 41ade880-44cf-4ee2-8321-22c3ce1b9b77.
+org.apache.spark.SparkException: Job aborted due to stage failure: Task 12 in stage 0.0 failed 1 times, most recent failure: Lost task 12.0 in stage 0.0 (TID 12) (debd2009e5d1 executor driver): org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2785)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2721)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2720)
+	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2720)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1206)
+	at scala.Option.foreach(Option.scala:407)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:2984)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2923)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2912)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:971)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2263)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeWrite$4(FileFormatWriter.scala:307)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.writeAndCommit(FileFormatWriter.scala:271)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeWrite(FileFormatWriter.scala:304)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.write(FileFormatWriter.scala:190)
+	at org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand.run(InsertIntoHadoopFsRelationCommand.scala:190)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult$lzycompute(commands.scala:113)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult(commands.scala:111)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.executeCollect(commands.scala:125)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:118)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:195)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:103)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:827)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:65)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:94)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(TreeNode.scala:104)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:488)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:94)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:81)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:79)
+	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:133)
+	at org.apache.spark.sql.DataFrameWriter.runCommand(DataFrameWriter.scala:856)
+	at org.apache.spark.sql.DataFrameWriter.saveToV1Source(DataFrameWriter.scala:387)
+	at org.apache.spark.sql.DataFrameWriter.saveInternal(DataFrameWriter.scala:360)
+	at org.apache.spark.sql.DataFrameWriter.save(DataFrameWriter.scala:239)
+	at org.apache.spark.sql.DataFrameWriter.csv(DataFrameWriter.scala:847)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/java.lang.reflect.Method.invoke(Unknown Source)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	... 1 more
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+25/12/11 11:14:30 WARN BlockManager: Block rdd_23_104 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:31 WARN BlockManager: Block rdd_28_104 could not be removed as it was not found on disk or in memory
+25/12/11 11:14:31 ERROR Utils: Aborting task
+java.lang.InterruptedException
+	at java.base/java.util.concurrent.locks.AbstractQueuedSynchronizer.tryAcquireSharedNanos(Unknown Source)
+	at scala.concurrent.impl.Promise$DefaultPromise.tryAwait(Promise.scala:248)
+	at scala.concurrent.impl.Promise$DefaultPromise.ready(Promise.scala:258)
+	at scala.concurrent.impl.Promise$DefaultPromise.result(Promise.scala:263)
+	at org.apache.spark.util.ThreadUtils$.awaitResult(ThreadUtils.scala:314)
+	at org.apache.spark.rpc.RpcTimeout.awaitResult(RpcTimeout.scala:75)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:101)
+	at org.apache.spark.rpc.RpcEndpointRef.askSync(RpcEndpointRef.scala:85)
+	at org.apache.spark.storage.BlockManagerMaster.updateBlockInfo(BlockManagerMaster.scala:105)
+	at org.apache.spark.storage.BlockManager.tryToReportBlockStatus(BlockManager.scala:869)
+	at org.apache.spark.storage.BlockManager.reportBlockStatus(BlockManager.scala:848)
+	at org.apache.spark.storage.BlockManager.removeBlockInternal(BlockManager.scala:2018)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1489)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.$anonfun$getOrCompute$1(RDD.scala:377)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6(BlockManager.scala:1573)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$6$adapted(BlockManager.scala:1571)
+	at org.apache.spark.storage.DiskStore.put(DiskStore.scala:87)
+	at org.apache.spark.storage.BlockManager.$anonfun$doPutIterator$1(BlockManager.scala:1571)
+	at org.apache.spark.storage.BlockManager.org$apache$spark$storage$BlockManager$$doPut(BlockManager.scala:1462)
+	at org.apache.spark.storage.BlockManager.doPutIterator(BlockManager.scala:1526)
+	at org.apache.spark.storage.BlockManager.getOrElseUpdate(BlockManager.scala:1349)
+	at org.apache.spark.rdd.RDD.getOrCompute(RDD.scala:375)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:326)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.rdd.CoalescedRDD.$anonfun$compute$1(CoalescedRDD.scala:99)
+	at scala.collection.Iterator$$anon$11.nextCur(Iterator.scala:486)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:492)
+	at org.apache.spark.sql.execution.datasources.FileFormatDataWriter.writeWithIterator(FileFormatDataWriter.scala:91)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeTask$1(FileFormatWriter.scala:403)
+	at org.apache.spark.util.Utils$.tryWithSafeFinallyAndFailureCallbacks(Utils.scala:1563)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:410)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+25/12/11 11:14:31 WARN FileOutputCommitter: Could not delete file:/opt/app/workspace/store/wiki/pages.tsv/_temporary/0/_temporary/attempt_202512111052122507751344862751638_0000_m_000016_16
+25/12/11 11:14:31 ERROR FileFormatWriter: Job job_202512111052122507751344862751638_0000 aborted.
+25/12/11 11:14:31 WARN TaskSetManager: Lost task 39.0 in stage 0.0 (TID 39) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:32 WARN TaskSetManager: Lost task 43.0 in stage 0.0 (TID 43) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 45.0 in stage 0.0 (TID 45) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 44.0 in stage 0.0 (TID 44) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 32.0 in stage 0.0 (TID 32) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 41.0 in stage 0.0 (TID 41) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 36.0 in stage 0.0 (TID 36) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 37.0 in stage 0.0 (TID 37) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 16.0 in stage 0.0 (TID 16) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 38.0 in stage 0.0 (TID 38) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 46.0 in stage 0.0 (TID 46) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 40.0 in stage 0.0 (TID 40) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 42.0 in stage 0.0 (TID 42) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+25/12/11 11:14:33 WARN TaskSetManager: Lost task 34.0 in stage 0.0 (TID 34) (debd2009e5d1 executor driver): TaskKilled (Stage cancelled)
+2025-12-11 11:14:33,335 [ERROR] Extraction failed: An error occurred while calling o321.csv.
+: org.apache.spark.SparkException: Job aborted due to stage failure: Task 12 in stage 0.0 failed 1 times, most recent failure: Lost task 12.0 in stage 0.0 (TID 12) (debd2009e5d1 executor driver): org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2785)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2721)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2720)
+	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2720)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1206)
+	at scala.Option.foreach(Option.scala:407)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:2984)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2923)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2912)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:971)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2263)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeWrite$4(FileFormatWriter.scala:307)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.writeAndCommit(FileFormatWriter.scala:271)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeWrite(FileFormatWriter.scala:304)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.write(FileFormatWriter.scala:190)
+	at org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand.run(InsertIntoHadoopFsRelationCommand.scala:190)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult$lzycompute(commands.scala:113)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult(commands.scala:111)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.executeCollect(commands.scala:125)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:118)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:195)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:103)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:827)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:65)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:94)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(TreeNode.scala:104)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:488)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:94)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:81)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:79)
+	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:133)
+	at org.apache.spark.sql.DataFrameWriter.runCommand(DataFrameWriter.scala:856)
+	at org.apache.spark.sql.DataFrameWriter.saveToV1Source(DataFrameWriter.scala:387)
+	at org.apache.spark.sql.DataFrameWriter.saveInternal(DataFrameWriter.scala:360)
+	at org.apache.spark.sql.DataFrameWriter.save(DataFrameWriter.scala:239)
+	at org.apache.spark.sql.DataFrameWriter.csv(DataFrameWriter.scala:847)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/java.lang.reflect.Method.invoke(Unknown Source)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	... 1 more
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+2025-12-11 11:14:33,410 [INFO] Closing down clientserver connection
+Traceback (most recent call last):
+  File "/opt/app/spark/jobs/wiki_extractor.py", line 1308, in <module>
+    sys.exit(main())
+  File "/opt/app/spark/jobs/wiki_extractor.py", line 1035, in main
+    write_tsv(
+  File "/opt/app/spark/lib/io.py", line 79, in write_tsv
+    writer.csv(str(target_dir))
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/sql/readwriter.py", line 1799, in csv
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/java_gateway.py", line 1322, in __call__
+  File "/opt/spark/python/lib/pyspark.zip/pyspark/errors/exceptions/captured.py", line 169, in deco
+  File "/opt/spark/python/lib/py4j-0.10.9.7-src.zip/py4j/protocol.py", line 326, in get_return_value
+py4j.protocol.Py4JJavaError: An error occurred while calling o321.csv.
+: org.apache.spark.SparkException: Job aborted due to stage failure: Task 12 in stage 0.0 failed 1 times, most recent failure: Lost task 12.0 in stage 0.0 (TID 12) (debd2009e5d1 executor driver): org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+Driver stacktrace:
+	at org.apache.spark.scheduler.DAGScheduler.failJobAndIndependentStages(DAGScheduler.scala:2785)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2(DAGScheduler.scala:2721)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$abortStage$2$adapted(DAGScheduler.scala:2720)
+	at scala.collection.mutable.ResizableArray.foreach(ResizableArray.scala:62)
+	at scala.collection.mutable.ResizableArray.foreach$(ResizableArray.scala:55)
+	at scala.collection.mutable.ArrayBuffer.foreach(ArrayBuffer.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.abortStage(DAGScheduler.scala:2720)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGScheduler.$anonfun$handleTaskSetFailed$1$adapted(DAGScheduler.scala:1206)
+	at scala.Option.foreach(Option.scala:407)
+	at org.apache.spark.scheduler.DAGScheduler.handleTaskSetFailed(DAGScheduler.scala:1206)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.doOnReceive(DAGScheduler.scala:2984)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2923)
+	at org.apache.spark.scheduler.DAGSchedulerEventProcessLoop.onReceive(DAGScheduler.scala:2912)
+	at org.apache.spark.util.EventLoop$$anon$1.run(EventLoop.scala:49)
+	at org.apache.spark.scheduler.DAGScheduler.runJob(DAGScheduler.scala:971)
+	at org.apache.spark.SparkContext.runJob(SparkContext.scala:2263)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.$anonfun$executeWrite$4(FileFormatWriter.scala:307)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.writeAndCommit(FileFormatWriter.scala:271)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeWrite(FileFormatWriter.scala:304)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.write(FileFormatWriter.scala:190)
+	at org.apache.spark.sql.execution.datasources.InsertIntoHadoopFsRelationCommand.run(InsertIntoHadoopFsRelationCommand.scala:190)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult$lzycompute(commands.scala:113)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.sideEffectResult(commands.scala:111)
+	at org.apache.spark.sql.execution.command.DataWritingCommandExec.executeCollect(commands.scala:125)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.$anonfun$applyOrElse$1(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$6(SQLExecution.scala:118)
+	at org.apache.spark.sql.execution.SQLExecution$.withSQLConfPropagated(SQLExecution.scala:195)
+	at org.apache.spark.sql.execution.SQLExecution$.$anonfun$withNewExecutionId$1(SQLExecution.scala:103)
+	at org.apache.spark.sql.SparkSession.withActive(SparkSession.scala:827)
+	at org.apache.spark.sql.execution.SQLExecution$.withNewExecutionId(SQLExecution.scala:65)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:98)
+	at org.apache.spark.sql.execution.QueryExecution$$anonfun$eagerlyExecuteCommands$1.applyOrElse(QueryExecution.scala:94)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.$anonfun$transformDownWithPruning$1(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.trees.CurrentOrigin$.withOrigin(TreeNode.scala:104)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDownWithPruning(TreeNode.scala:512)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.org$apache$spark$sql$catalyst$plans$logical$AnalysisHelper$$super$transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning(AnalysisHelper.scala:267)
+	at org.apache.spark.sql.catalyst.plans.logical.AnalysisHelper.transformDownWithPruning$(AnalysisHelper.scala:263)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.plans.logical.LogicalPlan.transformDownWithPruning(LogicalPlan.scala:31)
+	at org.apache.spark.sql.catalyst.trees.TreeNode.transformDown(TreeNode.scala:488)
+	at org.apache.spark.sql.execution.QueryExecution.eagerlyExecuteCommands(QueryExecution.scala:94)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted$lzycompute(QueryExecution.scala:81)
+	at org.apache.spark.sql.execution.QueryExecution.commandExecuted(QueryExecution.scala:79)
+	at org.apache.spark.sql.execution.QueryExecution.assertCommandExecuted(QueryExecution.scala:133)
+	at org.apache.spark.sql.DataFrameWriter.runCommand(DataFrameWriter.scala:856)
+	at org.apache.spark.sql.DataFrameWriter.saveToV1Source(DataFrameWriter.scala:387)
+	at org.apache.spark.sql.DataFrameWriter.saveInternal(DataFrameWriter.scala:360)
+	at org.apache.spark.sql.DataFrameWriter.save(DataFrameWriter.scala:239)
+	at org.apache.spark.sql.DataFrameWriter.csv(DataFrameWriter.scala:847)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)
+	at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(Unknown Source)
+	at java.base/java.lang.reflect.Method.invoke(Unknown Source)
+	at py4j.reflection.MethodInvoker.invoke(MethodInvoker.java:244)
+	at py4j.reflection.ReflectionEngine.invoke(ReflectionEngine.java:374)
+	at py4j.Gateway.invoke(Gateway.java:282)
+	at py4j.commands.AbstractCommand.invokeMethod(AbstractCommand.java:132)
+	at py4j.commands.CallCommand.execute(CallCommand.java:79)
+	at py4j.ClientServerConnection.waitForCommands(ClientServerConnection.java:182)
+	at py4j.ClientServerConnection.run(ClientServerConnection.java:106)
+	at java.base/java.lang.Thread.run(Unknown Source)
+Caused by: org.apache.spark.SparkException: [TASK_WRITE_FAILED] Task failed while writing rows to file:/opt/app/workspace/store/wiki/pages.tsv.
+	at org.apache.spark.sql.errors.QueryExecutionErrors$.taskFailedWhileWritingRowsError(QueryExecutionErrors.scala:788)
+	at org.apache.spark.sql.execution.datasources.FileFormatWriter$.executeTask(FileFormatWriter.scala:420)
+	at org.apache.spark.sql.execution.datasources.WriteFilesExec.$anonfun$doExecuteWrite$1(WriteFiles.scala:100)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2(RDD.scala:888)
+	at org.apache.spark.rdd.RDD.$anonfun$mapPartitionsInternal$2$adapted(RDD.scala:888)
+	at org.apache.spark.rdd.MapPartitionsRDD.compute(MapPartitionsRDD.scala:52)
+	at org.apache.spark.rdd.RDD.computeOrReadCheckpoint(RDD.scala:364)
+	at org.apache.spark.rdd.RDD.iterator(RDD.scala:328)
+	at org.apache.spark.scheduler.ResultTask.runTask(ResultTask.scala:92)
+	at org.apache.spark.TaskContext.runTaskWithListeners(TaskContext.scala:161)
+	at org.apache.spark.scheduler.Task.run(Task.scala:139)
+	at org.apache.spark.executor.Executor$TaskRunner.$anonfun$run$3(Executor.scala:554)
+	at org.apache.spark.util.Utils$.tryWithSafeFinally(Utils.scala:1529)
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:557)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(Unknown Source)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)
+	... 1 more
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl.read(Unknown Source)
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(Unknown Source)
+	at java.base/java.net.Socket$SocketInputStream.read(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read1(Unknown Source)
+	at java.base/java.io.BufferedInputStream.read(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at java.base/java.io.DataInputStream.readFully(Unknown Source)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:86)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$2.read(PythonUDFRunner.scala:75)
+	at org.apache.spark.api.python.BasePythonRunner$ReaderIterator.hasNext(PythonRunner.scala:514)
+	at org.apache.spark.InterruptibleIterator.hasNext(InterruptibleIterator.scala:37)
+	at scala.collection.Iterator$$anon$11.hasNext(Iterator.scala:491)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.sql.catalyst.expressions.GeneratedClass$GeneratedIteratorForCodegenStage1.processNext(Unknown Source)
+	at org.apache.spark.sql.execution.BufferedRowIterator.hasNext(BufferedRowIterator.java:43)
+	at org.apache.spark.sql.execution.WholeStageCodegenExec$$anon$1.hasNext(WholeStageCodegenExec.scala:760)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at org.apache.spark.ContextAwareIterator.hasNext(ContextAwareIterator.scala:39)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator$GroupedIterator.takeDestructively(Iterator.scala:1160)
+	at scala.collection.Iterator$GroupedIterator.go(Iterator.scala:1176)
+	at scala.collection.Iterator$GroupedIterator.fill(Iterator.scala:1214)
+	at scala.collection.Iterator$GroupedIterator.hasNext(Iterator.scala:1217)
+	at scala.collection.Iterator$$anon$10.hasNext(Iterator.scala:460)
+	at scala.collection.Iterator.foreach(Iterator.scala:943)
+	at scala.collection.Iterator.foreach$(Iterator.scala:943)
+	at scala.collection.AbstractIterator.foreach(Iterator.scala:1431)
+	at org.apache.spark.api.python.PythonRDD$.writeIteratorToStream(PythonRDD.scala:320)
+	at org.apache.spark.sql.execution.python.PythonUDFRunner$$anon$1.writeIteratorToStream(PythonUDFRunner.scala:57)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.$anonfun$run$1(PythonRunner.scala:440)
+	at org.apache.spark.util.Utils$.logUncaughtExceptions(Utils.scala:2088)
+	at org.apache.spark.api.python.BasePythonRunner$WriterThread.run(PythonRunner.scala:274)
+
+2025-12-11 11:14:35,552 [INFO] Closing down clientserver connection
+
+➜  vinf git:(master) ✗ 

@@ -7,3 +7,4 @@ venv/
 .vscode/
 ./demo/
 wiki_dump/
+spark_local/
