@@ -21,7 +21,7 @@ import os
 import sys
 import time
 import re
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,16 +59,33 @@ def _int_env(name: str, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def _resolve_default_entities_path() -> str:
+    """
+    Prefer the heaviest, actually populated entities dump.
+    Falls back to legacy location if the primary file is missing.
+    """
+    candidates = [
+        "/opt/app/workspace/store/entities/entities2.tsv",
+        "/opt/app/workspace/store/entities/entities.tsv",
+        "/opt/app/workspace/store/spark/entities/entities.tsv",
+    ]
+    for candidate in candidates:
+        if Path(candidate).exists():
+            return candidate
+    return candidates[-1]
+
+
 def _load_env_args() -> SimpleNamespace:
     """Load runtime options from environment variables."""
     entities_max_rows = _int_env("JOIN_ENTITIES_MAX_ROWS", _int_env("SAMPLE"))
     return SimpleNamespace(
-        entities=os.environ.get("JOIN_ENTITIES", "/opt/app/workspace/store/spark/entities/entities.tsv"),
-        wiki=os.environ.get("JOIN_WIKI", "/opt/app/workspace/store/wiki"),
-        out=os.environ.get("JOIN_OUT", "/opt/app/workspace/store/join"),
+        entities=os.environ.get("JOIN_ENTITIES", _resolve_default_entities_path()),
+        wiki=os.environ.get("JOIN_WIKI", "/opt/app/workspace/store/spark/wiki"),
+        out=os.environ.get("JOIN_OUT", "/opt/app/workspace/store/spark/join"),
         entities_max_rows=entities_max_rows,
         partitions=_int_env("JOIN_PARTITIONS", _int_env("PARTITIONS", 64)) or 64,
         log=os.environ.get("JOIN_LOG", "logs/wiki_join.jsonl"),
+        stats_enabled=_bool_env("JOIN_STATS", True),
         dry_run=_bool_env("JOIN_DRY_RUN", False),
         coalesce_output=_bool_env("JOIN_COALESCE_OUTPUT", False),
         max_records_per_file=_int_env("JOIN_MAX_RECORDS_PER_FILE", 2_000_000) or 2_000_000,
@@ -134,11 +151,21 @@ def prepare_canonical_mapping(pages_df: DataFrame, aliases_df: Optional[DataFram
     Create canonical mapping from normalized titles to page info.
     Includes both direct pages and aliases.
     """
+    logger = logging.getLogger(__name__)
+
+    def _compact(col: str):
+        return F.regexp_replace(F.coalesce(F.col(col), F.lit("")), r"[\s_.-]+", "")
+
+    normalize_title_udf = F.udf(normalize_title, StringType())
+
+    # Restrict to main namespace; keep redirects for aliasing
+    mainspace_pages = pages_df.filter(F.col("ns") == 0)
+    canonical_pages = mainspace_pages.filter(F.col("redirect_to").isNull())
+
     # Create canonical entries from pages
-    canonical_df = pages_df.filter(
-        (F.col("ns") == 0) & F.col("redirect_to").isNull()
-    ).select(
+    canonical_df = canonical_pages.select(
         F.col("norm_title").alias("norm_key"),
+        _compact("norm_title").alias("norm_key_compact"),
         F.col("page_id"),
         F.col("title").alias("wiki_title"),
         F.lit("direct").alias("match_type")
@@ -148,11 +175,12 @@ def prepare_canonical_mapping(pages_df: DataFrame, aliases_df: Optional[DataFram
     if aliases_df is not None:
         # Join aliases with pages to get canonical page info
         alias_canonical = aliases_df.alias("a").join(
-            pages_df.alias("p"),
+            canonical_pages.alias("p"),
             F.col("a.canonical_norm_title") == F.col("p.norm_title"),
             "inner"
         ).select(
             F.col("a.alias_norm_title").alias("norm_key"),
+            _compact("a.alias_norm_title").alias("norm_key_compact"),
             F.col("p.page_id"),
             F.col("p.title").alias("wiki_title"),
             F.lit("alias").alias("match_type")
@@ -161,14 +189,52 @@ def prepare_canonical_mapping(pages_df: DataFrame, aliases_df: Optional[DataFram
         # Union direct and alias mappings
         canonical_df = canonical_df.union(alias_canonical)
 
+    # Treat redirects as aliases to boost coverage
+    redirects_df = mainspace_pages.filter(F.col("redirect_to").isNotNull())
+    if redirects_df is not None:
+        redirects_enriched = redirects_df.withColumn(
+            "redirect_norm_title",
+            normalize_title_udf(F.col("redirect_to"))
+        )
+
+        redirects_canonical = redirects_enriched.alias("r").join(
+            canonical_pages.alias("p"),
+            F.col("r.redirect_norm_title") == F.col("p.norm_title"),
+            "inner"
+        ).select(
+            F.col("r.norm_title").alias("norm_key"),
+            _compact("r.norm_title").alias("norm_key_compact"),
+            F.col("p.page_id"),
+            F.col("p.title").alias("wiki_title"),
+            F.lit("redirect").alias("match_type")
+        )
+        canonical_df = canonical_df.union(redirects_canonical)
+
     # Deduplicate (prefer direct matches over aliases)
+    match_priority = F.when(F.col("match_type") == "direct", F.lit(0)) \
+                      .when(F.col("match_type") == "redirect", F.lit(1)) \
+                      .otherwise(F.lit(2))
+
     window = Window.partitionBy("norm_key").orderBy(
-        F.when(F.col("match_type") == "direct", 0).otherwise(1),
+        match_priority,
         F.col("page_id")
     )
     canonical_df = canonical_df.withColumn(
         "rank", F.row_number().over(window)
     ).filter(F.col("rank") == 1).drop("rank")
+
+    # Also deduplicate by compact key to avoid collisions like "type script" vs "typescript"
+    compact_window = Window.partitionBy("norm_key_compact").orderBy(
+        match_priority,
+        F.col("page_id")
+    )
+    canonical_df = canonical_df.withColumn(
+        "rank", F.row_number().over(compact_window)
+    ).filter(F.col("rank") == 1).drop("rank")
+
+    canonical_df = canonical_df.filter(F.col("norm_key") != "")
+
+    logger.info("Canonical mapping prepared with compact keys and redirect aliases")
 
     return canonical_df
 
@@ -192,24 +258,35 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
     if not value:
         return ""
 
+    value = value.strip()
+
     # License shorthands to canonical labels before normalization
     license_map = {
         "mit": "MIT License",
         "mit license": "MIT License",
+        "mit-license": "MIT License",
         "apache-2.0": "Apache License 2.0",
         "apache 2.0": "Apache License 2.0",
         "apache 2": "Apache License 2.0",
+        "apache license 2.0": "Apache License 2.0",
+        "apache license v2": "Apache License 2.0",
+        "apache license version 2": "Apache License 2.0",
         "apache license 2": "Apache License 2.0",
         "gpl-3.0": "GNU General Public License",
         "gpl 3": "GNU General Public License",
+        "gplv3": "GNU General Public License",
         "gpl-2.0": "GNU General Public License",
         "gpl 2": "GNU General Public License",
+        "gplv2": "GNU General Public License",
         "lgpl-3.0": "GNU Lesser General Public License",
         "lgpl 3": "GNU Lesser General Public License",
+        "lgplv3": "GNU Lesser General Public License",
         "bsd-3-clause": "BSD 3 Clause License",
         "bsd 3 clause": "BSD 3 Clause License",
+        "bsd 3-clause license": "BSD 3 Clause License",
         "bsd-2-clause": "BSD 2 Clause License",
         "bsd 2 clause": "BSD 2 Clause License",
+        "bsd 2-clause license": "BSD 2 Clause License",
         "mpl-2.0": "Mozilla Public License 2.0",
         "mpl 2.0": "Mozilla Public License 2.0",
         "unlicense": "Unlicense",
@@ -219,19 +296,27 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
     lang_map = {
         "js": "JavaScript",
         "ts": "TypeScript",
+        "typescript": "TypeScript",
+        "type script": "TypeScript",
+        "type-script": "TypeScript",
         "py": "Python",
         "py3": "Python",
         "c#": "C Sharp",
+        "c sharp": "C Sharp",
         "csharp": "C Sharp",
         "c++": "C++",
+        "c plus plus": "C++",
         "cpp": "C++",
         "c/c++": "C++",
         "objc": "Objective-C",
         "objective-c": "Objective-C",
+        "objective c": "Objective-C",
         "golang": "Go",
         "vue.js": "Vue.js",
+        "vue js": "Vue.js",
         "nodejs": "Node.js",
         "node": "Node.js",
+        "node js": "Node.js",
     }
 
     # For topics, they might be comma-separated
@@ -243,7 +328,11 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
             value = topics[0].strip()
 
     if entity_type == 'URL':
-        parsed = urlparse(value)
+        try:
+            parsed = urlparse(value)
+        except Exception:
+            # If urlparse fails (e.g., malformed IPv6 URL), fall back to raw value
+            return normalize_title(re.sub(r'[-_]+', ' ', value))
         segments = [seg for seg in parsed.path.split('/') if seg]
         # Prefer the last meaningful segment
         if segments:
@@ -251,57 +340,48 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
             candidate = re.sub(r'\.(git|html|htm)$', '', candidate, flags=re.IGNORECASE)
         else:
             candidate = parsed.netloc or value
+        candidate = unquote(candidate)
         # Replace delimiters with spaces before normalization
         candidate = re.sub(r'[-_]+', ' ', candidate)
         return normalize_title(candidate)
 
     if entity_type == 'LICENSE':
         lowered = value.strip().lower()
-        mapped = license_map.get(lowered, value)
+        normalized_lowered = re.sub(r'[_/]+', ' ', lowered)
+        mapped = license_map.get(lowered, license_map.get(normalized_lowered, value))
         return normalize_title(mapped)
 
     if entity_type == 'LANG_STATS':
         lowered = value.strip().lower()
-        mapped = lang_map.get(lowered, value)
+        normalized_lowered = re.sub(r'[\\/_-]+', ' ', lowered)
+        mapped = lang_map.get(lowered, lang_map.get(normalized_lowered, value))
         return normalize_title(mapped)
 
     # Apply standard normalization (same as Wikipedia titles)
     return normalize_title(value)
 
 
-def join_entities_with_wiki(
+def build_join_base(
     entities_df: DataFrame,
     canonical_df: DataFrame,
-    categories_df: Optional[DataFrame] = None,
-    abstracts_df: Optional[DataFrame] = None
 ) -> (DataFrame, Dict[str, int]):
     """
-    Join entities with Wikipedia canonical data.
-
-    Includes wiki_categories (pipe-separated) and wiki_abstract in output.
+    Join entities with Wikipedia canonical data but keep only lightweight columns.
+    Heavy wiki enrichment (categories/abstracts) is added later to avoid
+    materializing large strings during statistics.
     """
-    # Register UDF for normalization
     normalize_udf = F.udf(normalize_entity_value, StringType())
 
-    # Filter to supported entity types
     supported_types = get_supported_entity_types()
-    entities_filtered = entities_df.filter(
-        F.col("type").isin(supported_types)
-    )
+    entities_filtered = entities_df.filter(F.col("type").isin(supported_types))
 
-    # Normalize entity values
     entities_normalized = entities_filtered.withColumn(
         "norm_value", normalize_udf(F.col("value"), F.col("type"))
     )
 
-    # For TOPICS, we should explode them
-    # If type is TOPICS and value contains commas, explode
     entities_exploded = entities_normalized.withColumn(
         "value_array",
-        F.when(
-            F.col("type") == "TOPICS",
-            F.split(F.col("value"), ",")
-        ).otherwise(F.array(F.col("value")))
+        F.when(F.col("type") == "TOPICS", F.split(F.col("value"), ",")).otherwise(F.array(F.col("value")))
     ).select(
         F.col("doc_id"),
         F.col("type").alias("entity_type"),
@@ -309,39 +389,75 @@ def join_entities_with_wiki(
         F.col("offsets_json")
     ).withColumn(
         "norm_value", normalize_udf(F.trim(F.col("entity_value")), F.col("entity_type"))
+    ).withColumn(
+        "norm_value_compact",
+        F.regexp_replace(F.col("norm_value"), r"[\s_.-]+", "")
     )
 
-    # Basic diagnostics on empty normalization to avoid counting unmatchable entities
     norm_stats = entities_exploded.agg(
         F.count("*").alias("total_entities"),
         F.sum(F.when(F.col("norm_value") == "", 1).otherwise(0)).alias("empty_norm_values")
     ).collect()[0]
 
-    # Drop rows that normalize to empty strings to avoid counting unmatchable entities
     entities_exploded = entities_exploded.filter(F.col("norm_value") != "")
 
-    # Join with canonical mapping
+    join_condition = (
+        (F.col("e.norm_value") == F.col("c.norm_key")) |
+        (F.col("e.norm_value_compact") == F.col("c.norm_key_compact"))
+    )
     joined_df = entities_exploded.alias("e").join(
         canonical_df.alias("c"),
-        F.col("e.norm_value") == F.col("c.norm_key"),
+        join_condition,
         "left"
     ).select(
         F.col("e.doc_id"),
         F.col("e.entity_type"),
         F.col("e.entity_value"),
         F.col("e.norm_value"),
+        F.col("e.norm_value_compact"),
         F.col("c.page_id").alias("wiki_page_id"),
         F.col("c.wiki_title"),
         F.col("c.norm_key").alias("join_key"),
-        F.col("c.match_type")
+        F.col("c.match_type"),
+        F.when(F.col("e.norm_value") == F.col("c.norm_key"), F.lit("exact"))
+         .when(F.col("e.norm_value_compact") == F.col("c.norm_key_compact"), F.lit("compact"))
+         .otherwise(F.lit(None)).alias("match_source")
     )
 
-    # Add category signals if available
-    has_relevant_category_col = F.lit(False)
-    wiki_categories_col = F.lit(None).cast(StringType())
+    match_rank = F.when(F.col("match_type") == "direct", F.lit(0)) \
+        .when(F.col("match_type") == "redirect", F.lit(1)) \
+        .when(F.col("match_type").isNotNull(), F.lit(2)) \
+        .otherwise(F.lit(3))
+    source_rank = F.when(F.col("match_source") == "exact", F.lit(0)) \
+        .when(F.col("match_source") == "compact", F.lit(1)) \
+        .otherwise(F.lit(2))
 
+    dedup_window = Window.partitionBy(
+        "doc_id", "entity_type", "entity_value", "norm_value", "norm_value_compact"
+    ).orderBy(match_rank, source_rank, F.col("wiki_page_id"))
+
+    joined_df = joined_df.withColumn("row_rank", F.row_number().over(dedup_window)) \
+        .filter(F.col("row_rank") == 1) \
+        .drop("row_rank", "match_source")
+
+    norm_stats_dict = {
+        "entities_seen": int(norm_stats["total_entities"]),
+        "empty_norm_values": int(norm_stats["empty_norm_values"]),
+        "entities_used": int(norm_stats["total_entities"] - norm_stats["empty_norm_values"]),
+    }
+
+    return joined_df, norm_stats_dict
+
+
+def enrich_join_with_wiki_content(
+    joined_df: DataFrame,
+    categories_df: Optional[DataFrame],
+    abstracts_df: Optional[DataFrame]
+) -> DataFrame:
+    """
+    Add wiki categories, abstracts, and confidence labels.
+    """
     if categories_df is not None:
-        # Aggregate categories per page_id (pipe-separated)
         categories_agg = categories_df.groupBy("page_id").agg(
             F.concat_ws("|", F.collect_list("category")).alias("wiki_categories"),
             F.max(
@@ -358,13 +474,11 @@ def join_entities_with_wiki(
             "left"
         ).drop(categories_agg.page_id)
 
-        # Fill nulls
         joined_df = joined_df.fillna({"has_relevant_category": False, "wiki_categories": ""})
     else:
         joined_df = joined_df.withColumn("has_relevant_category", F.lit(False))
         joined_df = joined_df.withColumn("wiki_categories", F.lit(""))
 
-    # Add abstracts if available
     if abstracts_df is not None:
         joined_df = joined_df.join(
             abstracts_df.select(
@@ -379,7 +493,6 @@ def join_entities_with_wiki(
     else:
         joined_df = joined_df.withColumn("wiki_abstract", F.lit(""))
 
-    # Calculate confidence scores with labels
     confidence_expr = F.when(
         F.col("wiki_page_id").isNull(),
         F.lit(None).cast(StringType())
@@ -389,6 +502,11 @@ def join_entities_with_wiki(
             F.when(F.col("has_relevant_category"), F.lit("exact+cat"))
              .when(F.col("wiki_abstract") != "", F.lit("exact+abs"))
              .otherwise(F.lit("exact"))
+        ).when(
+            F.col("match_type") == "redirect",
+            F.when(F.col("has_relevant_category"), F.lit("redirect+cat"))
+             .when(F.col("wiki_abstract") != "", F.lit("redirect+abs"))
+             .otherwise(F.lit("redirect"))
         ).otherwise(
             F.when(F.col("has_relevant_category"), F.lit("alias+cat"))
              .when(F.col("wiki_abstract") != "", F.lit("alias+abs"))
@@ -398,8 +516,7 @@ def join_entities_with_wiki(
 
     joined_df = joined_df.withColumn("confidence", confidence_expr)
 
-    # Select final columns (including wiki_abstract and wiki_categories)
-    final_df = joined_df.select(
+    return joined_df.select(
         "doc_id",
         "entity_type",
         "entity_value",
@@ -412,18 +529,10 @@ def join_entities_with_wiki(
         "confidence"
     )
 
-    norm_stats_dict = {
-        "entities_seen": int(norm_stats["total_entities"]),
-        "empty_norm_values": int(norm_stats["empty_norm_values"]),
-        "entities_used": int(norm_stats["total_entities"] - norm_stats["empty_norm_values"]),
-    }
-
-    return final_df, norm_stats_dict
-
 
 def generate_statistics(joined_df: DataFrame, logger) -> Dict:
     """
-    Generate join statistics using a SINGLE aggregation pass.
+    Generate join statistics using a SINGLE aggregation pass (approx distinct to reduce shuffle).
 
     STREAMING OPTIMIZATION: Uses a single groupBy aggregation instead of
     multiple count() operations. This avoids multiple full scans of the data.
@@ -436,8 +545,8 @@ def generate_statistics(joined_df: DataFrame, logger) -> Dict:
     overall_stats = joined_df.agg(
         F.count("*").alias("total_entities"),
         F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched_entities"),
-        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id"))).alias("unique_wiki_pages"),
-        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("doc_id"))).alias("unique_docs_with_wiki")
+        F.approx_count_distinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id")), rsd=0.01).alias("unique_wiki_pages"),
+        F.approx_count_distinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("doc_id")), rsd=0.01).alias("unique_docs_with_wiki")
     ).collect()[0]  # Single row result - safe to collect
 
     total_entities = overall_stats["total_entities"]
@@ -449,7 +558,7 @@ def generate_statistics(joined_df: DataFrame, logger) -> Dict:
     type_stats = joined_df.groupBy("entity_type").agg(
         F.count("*").alias("total"),
         F.sum(F.when(F.col("wiki_page_id").isNotNull(), 1).otherwise(0)).alias("matched"),
-        F.countDistinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id"))).alias("unique_pages")
+        F.approx_count_distinct(F.when(F.col("wiki_page_id").isNotNull(), F.col("wiki_page_id")), rsd=0.01).alias("unique_pages")
     ).collect()  # Small result set (few entity types) - safe to collect
 
     stats = {
@@ -547,65 +656,139 @@ def main() -> int:
 
         # Perform join with categories and abstracts
         logger.info("Joining entities with Wikipedia...")
-        joined_df, norm_stats = join_entities_with_wiki(
+        join_base_df, norm_stats = build_join_base(
             entities_df,
-            canonical_df,
-            wiki_data.get('categories'),
-            wiki_data.get('abstracts')
+            canonical_df
         )
         logger.info(f"Entity normalization stats: {norm_stats}")
         struct_logger.log("normalization", **norm_stats)
 
-        # Persist joined_df to DISK_ONLY for reuse (writing + stats)
-        # This avoids recomputing the join multiple times
-        joined_df = joined_df.persist(StorageLevel.DISK_ONLY)
+        # Persist base join (without heavy wiki strings) for stats + downstream enrichment
+        logger.info("Persisting base joined DataFrame with DISK_ONLY storage (lightweight columns only)...")
+        join_base_df = join_base_df.persist(StorageLevel.DISK_ONLY)
+        logger.info("Base DataFrame marked for persistence (will materialize during stats generation)")
 
-        # Generate statistics - uses single aggregation pass (streaming optimized)
-        stats = generate_statistics(joined_df, logger)
-        logger.info(f"Join statistics: {json.dumps(stats, indent=2)}")
-        struct_logger.log("join_stats", **stats)
+        if args.stats_enabled:
+            logger.info("Generating join statistics (this will materialize the persisted DataFrame)...")
+            stats = generate_statistics(join_base_df, logger)
+            logger.info("DataFrame successfully materialized to disk during stats generation")
+            logger.info(f"Join statistics: {json.dumps(stats, indent=2)}")
+            struct_logger.log("join_stats", **stats)
+            entity_count = stats['total_entities']
+        else:
+            logger.info("JOIN_STATS disabled; skipping statistics aggregation to save time/resources")
+            stats = {
+                "stats_disabled": True,
+                "reason": "JOIN_STATS=false",
+                "total_entities_estimate": norm_stats["entities_used"]
+            }
+            struct_logger.log("join_stats_skipped", **stats)
+            entity_count = norm_stats["entities_used"]
 
-        # Get entity_count from stats (computed during stats generation, not separate scan)
-        entity_count = stats['total_entities']
+        # Pre-write validation: Check if we have data to write
+        if entity_count == 0:
+            logger.warning("No entities found after join - output files will be empty or minimal")
 
         if not args.dry_run:
-            # Write main join results (includes wiki_abstract and wiki_categories)
-            output_path = output_dir / "html_wiki.tsv"
-            write_tsv(
-                joined_df,
-                output_path,
-                ["doc_id", "entity_type", "entity_value", "norm_value",
-                 "wiki_page_id", "wiki_title", "wiki_abstract", "wiki_categories",
-                 "join_key", "confidence"],
-                header=True,
-                single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
-            )
-            logger.info(f"Wrote join results to {output_path}")
+            # Ensure output directory exists and is writable
+            try:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                # Test write permission
+                test_file = output_dir / ".write_test"
+                test_file.write_text("test")
+                test_file.unlink()
+                logger.info(f"✓ Output directory verified: {output_dir}")
+            except Exception as e:
+                logger.error(f"✗ Output directory not writable: {output_dir}")
+                logger.error(f"Error: {e}")
+                raise PermissionError(f"Cannot write to output directory: {output_dir}") from e
 
-            # Write aggregated statistics
-            stats_path = output_dir / "join_stats.json"
-            stats_path.write_text(json.dumps(stats, indent=2))
-            logger.info(f"Wrote statistics to {stats_path}")
+            logger.info("=" * 60)
+            logger.info("STARTING FILE WRITES")
+            logger.info(f"Total entities to write: {entity_count:,}")
+            logger.info(f"Output directory: {output_dir}")
+            logger.info(f"Write mode: {'COALESCE(1)' if args.coalesce_output else 'MERGE_PARTS'}")
+            logger.info("=" * 60)
+            # Write main join results (includes wiki_abstract and wiki_categories)
+            try:
+                logger.info("Enriching join with categories/abstracts for output...")
+                joined_df = enrich_join_with_wiki_content(
+                    join_base_df,
+                    wiki_data.get('categories'),
+                    wiki_data.get('abstracts')
+                )
+
+                logger.info("Writing main join results (html_wiki.tsv)...")
+                output_path = output_dir / "html_wiki.tsv"
+                write_tsv(
+                    joined_df,
+                    output_path,
+                    ["doc_id", "entity_type", "entity_value", "norm_value",
+                     "wiki_page_id", "wiki_title", "wiki_abstract", "wiki_categories",
+                     "join_key", "confidence"],
+                    header=True,
+                    single_file=args.coalesce_output,
+                    max_records_per_file=args.max_records_per_file,
+                    merge_after_write=not args.coalesce_output  # parallel write then merge to single TSV
+                )
+                # Validate file was created
+                if output_path.exists():
+                    file_size = output_path.stat().st_size
+                    logger.info(f"✓ Wrote join results to {output_path} ({file_size:,} bytes)")
+                else:
+                    logger.error(f"✗ FAILED: Output file not created: {output_path}")
+                    raise FileNotFoundError(f"Expected output file not found: {output_path}")
+            except Exception as e:
+                logger.error(f"✗ FAILED to write main join results: {e}")
+                logger.exception("Full traceback:")
+                raise
+
+            # Write aggregated statistics (optional)
+            if args.stats_enabled:
+                try:
+                    logger.info("Writing aggregated statistics (join_stats.json)...")
+                    stats_path = output_dir / "join_stats.json"
+                    stats_path.write_text(json.dumps(stats, indent=2))
+                    if stats_path.exists():
+                        logger.info(f"✓ Wrote statistics to {stats_path} ({stats_path.stat().st_size:,} bytes)")
+                    else:
+                        logger.error(f"✗ FAILED: Stats file not created: {stats_path}")
+                except Exception as e:
+                    logger.error(f"✗ FAILED to write statistics: {e}")
+                    logger.exception("Full traceback:")
+                    raise
 
             # Write per-document aggregates with proper fields per spec
-            doc_agg = joined_df.filter(F.col("wiki_page_id").isNotNull()).groupBy("doc_id").agg(
-                F.concat_ws(",", F.collect_set(F.col("wiki_page_id").cast("string"))).alias("joined_page_ids"),
-                F.countDistinct("wiki_page_id").alias("num_joined_pages"),
-                F.sum(F.when(F.col("entity_type") == "TOPICS", 1).otherwise(0)).alias("num_topics_joined"),
-                F.sum(F.when(F.col("entity_type") == "LICENSE", 1).otherwise(0)).alias("num_licenses_joined"),
-                F.sum(F.when(F.col("entity_type") == "LANG_STATS", 1).otherwise(0)).alias("num_langs_joined")
-            )
-            agg_path = output_dir / "html_wiki_agg.tsv"
-            write_tsv(
-                doc_agg, agg_path,
-                ["doc_id", "joined_page_ids", "num_joined_pages",
-                 "num_topics_joined", "num_licenses_joined", "num_langs_joined"],
-                header=True,
-                single_file=args.coalesce_output,
-                max_records_per_file=args.max_records_per_file
-            )
-            logger.info(f"Wrote document aggregates to {agg_path}")
+            try:
+                logger.info("Writing per-document aggregates (html_wiki_agg.tsv)...")
+                doc_agg = join_base_df.filter(F.col("wiki_page_id").isNotNull()).groupBy("doc_id").agg(
+                    F.concat_ws(",", F.collect_set(F.col("wiki_page_id").cast("string"))).alias("joined_page_ids"),
+                    F.countDistinct("wiki_page_id").alias("num_joined_pages"),
+                    F.sum(F.when(F.col("entity_type") == "TOPICS", 1).otherwise(0)).alias("num_topics_joined"),
+                    F.sum(F.when(F.col("entity_type") == "LICENSE", 1).otherwise(0)).alias("num_licenses_joined"),
+                    F.sum(F.when(F.col("entity_type") == "LANG_STATS", 1).otherwise(0)).alias("num_langs_joined")
+                )
+                agg_path = output_dir / "html_wiki_agg.tsv"
+                write_tsv(
+                    doc_agg, agg_path,
+                    ["doc_id", "joined_page_ids", "num_joined_pages",
+                     "num_topics_joined", "num_licenses_joined", "num_langs_joined"],
+                    header=True,
+                    single_file=args.coalesce_output,
+                    max_records_per_file=args.max_records_per_file,
+                    merge_after_write=not args.coalesce_output
+                )
+                # Validate file was created
+                if agg_path.exists():
+                    file_size = agg_path.stat().st_size
+                    logger.info(f"✓ Wrote document aggregates to {agg_path} ({file_size:,} bytes)")
+                else:
+                    logger.error(f"✗ FAILED: Aggregates file not created: {agg_path}")
+                    raise FileNotFoundError(f"Expected aggregates file not found: {agg_path}")
+            except Exception as e:
+                logger.error(f"✗ FAILED to write document aggregates: {e}")
+                logger.exception("Full traceback:")
+                raise
 
         # Write manifest
         duration = time.time() - start_time
@@ -621,7 +804,7 @@ def main() -> int:
             },
             "outputs": {
                 "join": str(output_dir / "html_wiki.tsv"),
-                "stats": str(output_dir / "join_stats.json"),
+                "stats": str(output_dir / "join_stats.json") if args.stats_enabled else None,
                 "aggregates": str(output_dir / "html_wiki_agg.tsv"),
             },
             "statistics": stats,
@@ -656,27 +839,35 @@ def main() -> int:
         )
         pipeline_stats.set_outputs(
             join_file=str(output_dir / "html_wiki.tsv"),
-            stats_file=str(output_dir / "join_stats.json"),
+            stats_file=str(output_dir / "join_stats.json") if args.stats_enabled else None,
             aggregates_file=str(output_dir / "html_wiki_agg.tsv")
         )
-        pipeline_stats.set_nested("join_statistics", "total_entities", stats['total_entities'])
-        pipeline_stats.set_nested("join_statistics", "matched_entities", stats['matched_entities'])
-        pipeline_stats.set_nested("join_statistics", "match_rate", stats['match_rate'])
-        pipeline_stats.set_nested("join_statistics", "unique_wiki_pages_joined", stats['unique_wiki_pages_joined'])
-        pipeline_stats.set_nested("join_statistics", "unique_docs_with_wiki", stats['unique_docs_with_wiki'])
+        pipeline_stats.set_nested("join_statistics", "stats_enabled", args.stats_enabled)
+        if args.stats_enabled:
+            pipeline_stats.set_nested("join_statistics", "total_entities", stats['total_entities'])
+            pipeline_stats.set_nested("join_statistics", "matched_entities", stats['matched_entities'])
+            pipeline_stats.set_nested("join_statistics", "match_rate", stats['match_rate'])
+            pipeline_stats.set_nested("join_statistics", "unique_wiki_pages_joined", stats['unique_wiki_pages_joined'])
+            pipeline_stats.set_nested("join_statistics", "unique_docs_with_wiki", stats['unique_docs_with_wiki'])
 
-        # Add entity type breakdown
-        for entity_type, type_stat in stats['by_type'].items():
-            pipeline_stats.set_entities(entity_type, type_stat['total'],
-                                       matched=type_stat['matched'],
-                                       unique_pages=type_stat['unique_pages'],
-                                       match_rate=type_stat['rate'])
+            # Add entity type breakdown
+            for entity_type, type_stat in stats['by_type'].items():
+                pipeline_stats.set_entities(entity_type, type_stat['total'],
+                                           matched=type_stat['matched'],
+                                           unique_pages=type_stat['unique_pages'],
+                                           match_rate=type_stat['rate'])
+        else:
+            pipeline_stats.set_nested("join_statistics", "total_entities_estimate", entity_count)
 
-        pipeline_stats.set_nested("performance", "entities_per_second",
-                                  round(stats['total_entities'] / duration, 2) if duration > 0 else 0)
+        entities_per_sec = (
+            round(stats['total_entities'] / duration, 2)
+            if args.stats_enabled and duration > 0
+            else round(entity_count / duration, 2) if duration > 0 else 0
+        )
+        pipeline_stats.set_nested("performance", "entities_per_second", entities_per_sec)
         pipeline_stats.finalize("completed")
-        stats_path = pipeline_stats.save()
-        logger.info(f"Stats saved to: {stats_path}")
+        stats_path_saved = pipeline_stats.save()
+        logger.info(f"Stats saved to: {stats_path_saved}")
 
         # Generate pipeline summary
         try:
@@ -690,23 +881,55 @@ def main() -> int:
         # Clean up persisted DataFrames to free disk space
         logger.info("Cleaning up persisted data...")
         try:
-            canonical_df.unpersist()
-            joined_df.unpersist()
+            if 'canonical_df' in locals():
+                canonical_df.unpersist()
+            if 'join_base_df' in locals():
+                join_base_df.unpersist()
         except Exception as cleanup_err:
             logger.warning(f"Cleanup warning (non-fatal): {cleanup_err}")
+
+        # Validate and report output files
+        logger.info("=" * 60)
+        logger.info("OUTPUT FILE VALIDATION")
+        logger.info("=" * 60)
+        output_files_ok = True
+        if not args.dry_run:
+            expected_files = [
+                (output_dir / "html_wiki.tsv", "Main join results"),
+                (output_dir / "html_wiki_agg.tsv", "Document aggregates"),
+            ]
+            if args.stats_enabled:
+                expected_files.append((output_dir / "join_stats.json", "Join statistics"))
+            for file_path, description in expected_files:
+                if file_path.exists():
+                    size_mb = file_path.stat().st_size / (1024 * 1024)
+                    logger.info(f"✓ {description}: {file_path} ({size_mb:.2f} MB)")
+                else:
+                    logger.error(f"✗ MISSING: {description}: {file_path}")
+                    output_files_ok = False
+
+            if not output_files_ok:
+                logger.error("Some output files are missing - job may have failed")
+        else:
+            logger.info("Dry-run mode - no files written")
 
         # Print summary
         logger.info("=" * 60)
         logger.info("WIKI-HTML JOIN COMPLETE (DataFrame API - Streaming Optimized)")
         logger.info(f"Duration: {duration:.2f} seconds")
-        logger.info(f"Total entities: {stats['total_entities']}")
-        logger.info(f"Matched entities: {stats['matched_entities']} ({stats['match_rate']}%)")
-        logger.info(f"Unique Wikipedia pages joined: {stats['unique_wiki_pages_joined']}")
-        logger.info(f"Unique docs with wiki matches: {stats['unique_docs_with_wiki']}")
-        logger.info("Match rates by type:")
-        for entity_type, type_stat in stats['by_type'].items():
-            logger.info(f"  {entity_type}: {type_stat['matched']}/{type_stat['total']} ({type_stat['rate']}%) - {type_stat['unique_pages']} unique pages")
+        if args.stats_enabled:
+            logger.info(f"Total entities: {stats['total_entities']:,}")
+            logger.info(f"Matched entities: {stats['matched_entities']:,} ({stats['match_rate']}%)")
+            logger.info(f"Unique Wikipedia pages joined: {stats['unique_wiki_pages_joined']:,}")
+            logger.info(f"Unique docs with wiki matches: {stats['unique_docs_with_wiki']:,}")
+            logger.info("Match rates by type:")
+            for entity_type, type_stat in stats['by_type'].items():
+                logger.info(f"  {entity_type}: {type_stat['matched']:,}/{type_stat['total']:,} ({type_stat['rate']}%) - {type_stat['unique_pages']:,} unique pages")
+        else:
+            logger.info(f"Statistics disabled; total entities estimate (after normalization): {entity_count:,}")
         logger.info(f"Manifest: {manifest_path}")
+        if not args.dry_run and output_files_ok:
+            logger.info("✓ All output files validated successfully")
         logger.info("=" * 60)
 
     finally:

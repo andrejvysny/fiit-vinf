@@ -277,6 +277,7 @@ EOF
         -e PARTITIONS="${PARTITIONS}" \
         -e WIKI_MAX_PAGES="${SAMPLE_PAGES}" \
         -e WIKI_PARTITIONS="${PARTITIONS}" \
+        -e WIKI_OUT="/opt/app/workspace/store/spark/wiki" \
         -e WIKI_NO_TEXT="true" \
         -e WIKI_FORCE="true" \
         spark-wiki
@@ -332,7 +333,7 @@ Options:
 
 Inputs:
   workspace/store/spark/entities/entities.tsv
-  workspace/store/wiki/*.tsv
+  workspace/store/spark/wiki/*.tsv
 
 Outputs:
   workspace/store/join/html_wiki.tsv
@@ -363,6 +364,8 @@ EOF
         -e PARTITIONS="${PARTITIONS}" \
         -e JOIN_ENTITIES_MAX_ROWS="${ENTITIES_MAX_ROWS}" \
         -e JOIN_PARTITIONS="${PARTITIONS}" \
+        -e JOIN_WIKI="/opt/app/workspace/store/spark/wiki" \
+        -e JOIN_ENTITIES="/opt/app/workspace/store/entities/entities2.tsv" \
         spark-join
 
     print_success "Entity-Wiki join completed"

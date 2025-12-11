@@ -28,7 +28,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Iterator, List, Optional, Tuple
 
-from pyspark.sql import DataFrame, Row, SparkSession
+from pyspark.sql import Column, DataFrame, Row, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, LongType,
@@ -313,10 +313,22 @@ def process_pages_dataframe(pages_df: DataFrame, extract_full_text: bool = True)
         F.explode(F.col("infobox_map")).alias("key", "value")
     )
 
-    # 5. Abstracts
+    def _single_line(col: Column) -> Column:
+        """
+        Force text to a single line suitable for TSV output by removing tabs,
+        newlines, and NULs, then collapsing whitespace.
+        """
+        cleaned = F.regexp_replace(col, r"[\r\n\t\x00\x0b\x0c\u2028\u2029]+", " ")
+        cleaned = F.translate(cleaned, '"', "'")
+        cleaned = F.regexp_replace(cleaned, r"\s+", " ")
+        return F.trim(cleaned)
+
+    # 5. Abstracts (sanitized for TSV)
     abstracts_df = pages_with_text.filter(F.col("text").isNotNull()).select(
         F.col("page_id"),
         extract_abstract_udf(F.col("text")).alias("abstract_text")
+    ).withColumn(
+        "abstract_text", _single_line(F.col("abstract_text"))
     ).filter(F.length("abstract_text") > 0)
 
     # 6. Aliases from redirects

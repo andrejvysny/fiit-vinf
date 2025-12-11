@@ -118,13 +118,14 @@ services:
       - SPARK_MAX_RESULT_SIZE=${SPARK_MAX_RESULT_SIZE:-4g}
       - SPARK_PYTHON_WORKER_MEMORY=${SPARK_PYTHON_WORKER_MEMORY:-4g}
       - SPARK_LOCAL_DIRS=/tmp/spark
+      - WIKI_OUT=/opt/app/workspace/store/spark/wiki
       - PYTHONPATH=/opt/app
       - PYSPARK_PYTHON=python3
       - HOME=/tmp
       - PARTITIONS=${PARTITIONS:-256}
     volumes:
       - ./wiki_dump:/opt/app/wiki_dump:ro
-      - ./workspace/store/wiki:/opt/app/workspace/store/wiki
+      - ./workspace/store/spark/wiki:/opt/app/workspace/store/spark/wiki
       - ./spark_local:/tmp/spark
       - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
@@ -182,7 +183,7 @@ services:
     volumes:
       - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
       - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
-      - ./workspace/store/wiki:/opt/app/workspace/store/wiki:ro
+      - ./workspace/store/spark/wiki:/opt/app/workspace/store/spark/wiki:ro
       - ./workspace/store/join:/opt/app/workspace/store/join
       - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro

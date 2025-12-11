@@ -163,9 +163,9 @@ def write_tsv(
         df.select(*columns)
         .write.mode("overwrite")
         .option("sep", "\t")
-        .option("quote", "\u0000")
         .option("header", "true" if header else "false")
         .option("encoding", "UTF-8")
+        .option("escape", "\"")
     )
 
     if max_records_per_file:

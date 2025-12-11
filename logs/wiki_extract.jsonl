@@ -1,0 +1,14 @@
+{"ts": 1765484137.0736592, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 50000}
+{"ts": 1765484199.3500643, "event": "complete", "duration": 62.274890422821045, "stats": {"pages": 38982, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765484413.890334, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 50000}
+{"ts": 1765484481.2297513, "event": "complete", "duration": 67.33744740486145, "stats": {"pages": 38982, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765484568.2344878, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 50000}
+{"ts": 1765484636.8732052, "event": "complete", "duration": 68.63721966743469, "stats": {"pages": 38982, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765484818.0208926, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 50000}
+{"ts": 1765484884.785455, "event": "complete", "duration": 66.76287078857422, "stats": {"pages": 38982, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765485031.2100399, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 50000}
+{"ts": 1765485093.460073, "event": "complete", "duration": 62.24899888038635, "stats": {"pages": 38982, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765485257.79371, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/spark/wiki", "max_pages": 1000000}
+{"ts": 1765485702.2888107, "event": "complete", "duration": 444.4932703971863, "stats": {"pages": 777755, "outputs_written": 6, "files_processed": 1}}
+{"ts": 1765487428.9734764, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/spark/wiki", "max_pages": 4000000}
+{"ts": 1765489037.671788, "event": "complete", "duration": 1608.6847336292267, "stats": {"pages": 3107596, "outputs_written": 6, "files_processed": 1}}
