@@ -10,7 +10,6 @@ set -euo pipefail
 #   extract       - Extract text and entities from crawled GitHub HTML
 #   wiki          - Extract structured data from Wikipedia dump
 #   join          - Join extracted entities with Wikipedia data
-#   join-topics   - Streaming join for topics with relevance filtering
 #   lucene-build  - Build PyLucene index
 #   lucene-search - Search the Lucene index
 #   lucene-compare- Compare TF-IDF vs Lucene results
@@ -72,7 +71,6 @@ Subcommands:
   extract        Extract text and entities from crawled GitHub HTML
   wiki           Extract structured data from Wikipedia dump
   join           Join extracted entities with Wikipedia data
-  join-topics    Streaming join for topics with relevance filtering
   lucene-build   Build PyLucene index from extracted data
   lucene-search  Search the Lucene index
   lucene-compare Compare TF-IDF vs Lucene search results
@@ -390,154 +388,6 @@ EOF
         spark-join
 
     print_success "Entity-Wiki join completed"
-}
-
-# =============================================================================
-# Subcommand: join-topics
-# =============================================================================
-
-cmd_join_topics() {
-    # This runs locally (requires local Spark installation)
-
-    # Defaults
-    local ENTITIES_PATH="${ENTITIES_PATH:-workspace/store/spark/entities/entities.tsv}"
-    local WIKI_DIR="${WIKI_DIR:-workspace/store/wiki}"
-    local OUT_DIR="${OUT_DIR:-workspace/store/wiki/join}"
-    local CHECKPOINT_DIR="${CHECKPOINT_DIR:-workspace/store/wiki/join/_chkpt/topics}"
-    local MAX_FILES_PER_TRIGGER="${MAX_FILES_PER_TRIGGER:-16}"
-    local RELEVANT_CATEGORIES="${RELEVANT_CATEGORIES:-programming,software,computer,library,framework,license}"
-    local ABS_HIT="${ABS_HIT:-true}"
-    local SHOW_HELP=false
-    local DO_CLEAN=false
-
-    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
-    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
-    export SPARK_SHUFFLE_PARTITIONS="${SPARK_SHUFFLE_PARTITIONS:-128}"
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            -h|--help)
-                SHOW_HELP=true
-                shift
-                ;;
-            --entities)
-                ENTITIES_PATH="$2"
-                shift 2
-                ;;
-            --wiki)
-                WIKI_DIR="$2"
-                shift 2
-                ;;
-            --out)
-                OUT_DIR="$2"
-                shift 2
-                ;;
-            --checkpoint)
-                CHECKPOINT_DIR="$2"
-                shift 2
-                ;;
-            --maxFilesPerTrigger)
-                MAX_FILES_PER_TRIGGER="$2"
-                shift 2
-                ;;
-            --relevantCategories)
-                RELEVANT_CATEGORIES="$2"
-                shift 2
-                ;;
-            --absHit)
-                ABS_HIT="$2"
-                shift 2
-                ;;
-            --clean)
-                DO_CLEAN=true
-                shift
-                ;;
-            *)
-                shift
-                ;;
-        esac
-    done
-
-    if [[ "$SHOW_HELP" == "true" ]]; then
-        cat <<EOF
-Streaming join for GitHub topics with Wikipedia relevance filtering.
-
-Usage: bin/cli join-topics [options]
-
-Options:
-  --entities PATH           Path to entities TSV
-  --wiki DIR                Wiki dimensions directory
-  --out DIR                 Output directory
-  --checkpoint DIR          Checkpoint directory
-  --maxFilesPerTrigger N    Max files per trigger (default: 16)
-  --relevantCategories KW   Comma-separated keywords
-  --absHit BOOL             Enable abstract matching (default: true)
-  --clean                   Clean checkpoint and output directories
-  -h, --help                Show this help
-
-Note: Requires local Spark installation (Java 11 or 17, not 24)
-
-Examples:
-  bin/cli join-topics                           # Run streaming join
-  bin/cli join-topics --maxFilesPerTrigger 8    # Lower memory usage
-  bin/cli join-topics --clean                   # Reset and clean
-EOF
-        return 0
-    fi
-
-    if [[ "$DO_CLEAN" == "true" ]]; then
-        print_warning "Cleaning checkpoint and output directories..."
-        rm -rf "${OUT_DIR}"
-        rm -rf "${CHECKPOINT_DIR}"
-        print_success "Cleaned: ${OUT_DIR}, ${CHECKPOINT_DIR}"
-        return 0
-    fi
-
-    # Check for local Spark
-    if ! command -v spark-submit >/dev/null 2>&1; then
-        print_error "Local Spark installation required for streaming join."
-        print_error "Install Spark and ensure spark-submit is in PATH."
-        exit 1
-    fi
-
-    print_header "Spark Streaming Topics Join"
-    echo "Entities: ${ENTITIES_PATH}"
-    echo "Wiki Dir: ${WIKI_DIR}"
-    echo "Output: ${OUT_DIR}"
-    echo "Checkpoint: ${CHECKPOINT_DIR}"
-    echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
-    echo "Max Files/Trigger: ${MAX_FILES_PER_TRIGGER}"
-    echo ""
-
-    # Create directories
-    mkdir -p "${OUT_DIR}"
-    mkdir -p "$(dirname "${CHECKPOINT_DIR}")"
-
-    cd "${PROJECT_ROOT}"
-
-    # Add Java 17+ compatibility flags
-    export SPARK_SUBMIT_OPTS="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED -Djdk.security.allowNonCaSignedJars=true"
-
-    exec spark-submit \
-        --master local[*] \
-        --driver-memory "${SPARK_DRIVER_MEMORY}" \
-        --executor-memory "${SPARK_EXECUTOR_MEMORY}" \
-        --conf spark.driver.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.invoke=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED" \
-        --conf spark.executor.extraJavaOptions="--add-exports=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED" \
-        --conf spark.sql.session.timeZone=UTC \
-        --conf spark.sql.shuffle.partitions="${SPARK_SHUFFLE_PARTITIONS}" \
-        --conf spark.driver.maxResultSize=2g \
-        --conf spark.sql.streaming.schemaInference=true \
-        --conf spark.sql.adaptive.enabled=true \
-        spark/jobs/join_html_wiki_topics.py \
-        --entities "${ENTITIES_PATH}" \
-        --wiki "${WIKI_DIR}" \
-        --out "${OUT_DIR}" \
-        --checkpoint "${CHECKPOINT_DIR}" \
-        --maxFilesPerTrigger "${MAX_FILES_PER_TRIGGER}" \
-        --relevantCategories "${RELEVANT_CATEGORIES}" \
-        --absHit "${ABS_HIT}"
 }
 
 # =============================================================================
@@ -1007,9 +857,6 @@ main() {
             ;;
         join)
             cmd_join "$@"
-            ;;
-        join-topics)
-            cmd_join_topics "$@"
             ;;
         lucene-build)
             cmd_lucene_build "$@"

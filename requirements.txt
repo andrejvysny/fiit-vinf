@@ -18,10 +18,8 @@ tiktoken>=0.5.0
 # zstandard>=0.22.0
 
 # Spark dependencies (match Docker image apache/spark-py:v3.4.0)
+# Note: No pandas/numpy/pyarrow - using pure Spark and native Python
 pyspark==3.4.0
-numpy>=1.24,<2
-pandas>=2.0.0,<2.2.0
-pyarrow>=10.0.1,<15
 
 # PyLucene (requires manual installation - see PYLUCENE_INSTALL.md)
 # PyLucene must be built from source with system JDK

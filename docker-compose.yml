@@ -55,7 +55,6 @@ services:
       - ./workspace/store/entities:/opt/app/workspace/store/entities
       - ./spark:/opt/app/spark:ro
       - ./spark_temp:/tmp/spark
-      - ./extractor:/opt/app/extractor:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./requirements.txt:/opt/app/requirements.txt:ro
       - ./config_loader.py:/opt/app/config_loader.py:ro
@@ -80,7 +79,7 @@ services:
           --conf spark.memory.fraction=0.8 \
           --conf spark.memory.storageFraction=0.3 \
           --conf spark.local.dir=/tmp/spark \
-          /opt/app/spark/main.py --config /opt/app/config.yml --partitions $${PARTITIONS:-128} $${SPARK_ARGS:-}
+          /opt/app/spark/jobs/html_extractor.py --config /opt/app/config.yml --partitions $${PARTITIONS:-128} $${SPARK_ARGS:-}
     user: "0:0"
     ports:
       - "4040:4040"

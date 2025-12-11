@@ -589,8 +589,6 @@ def main() -> int:
         .config("spark.sql.adaptive.enabled", "true") \
         .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
         .config("spark.sql.shuffle.partitions", str(args.partitions)) \
-        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-        .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
         .getOrCreate()
 
     spark.sparkContext.setLogLevel("WARN")
