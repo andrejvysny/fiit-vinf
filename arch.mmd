@@ -1,0 +1,17 @@
+graph LR
+A["Crawled GitHub HTML\nworkspace/store/html"] --> B["Spark HTML Extractor\nspark/jobs/html_extractor.py"]
+B --> C["Clean Text Files\nworkspace/store/text"]
+B --> D["Entities TSV\nworkspace/store/entities/entities2.tsv"]
+
+E["Wikipedia Dump (XML)\nwiki_dump/enwiki-*.xml"] --> F["Spark Wiki Extractor\nspark/jobs/wiki_extractor.py"]
+F --> G["Wiki TSV Datasets\npages, categories, aliases,\nabstracts, links, infobox"]
+
+D --> H["Spark Join\nspark/jobs/join_html_wiki.py"]
+G --> H
+H --> I["Join Output TSV\nhtml_wiki.tsv"]
+
+C --> J["PyLucene Index Builder\nlucene_indexer/build.py"]
+D --> J
+I --> J
+J --> K["Lucene Index\nworkspace/store/lucene_index"]
+K --> L["PyLucene Search\nlucene_indexer/search.py"]

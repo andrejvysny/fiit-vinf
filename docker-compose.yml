@@ -184,7 +184,7 @@ services:
       - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
       - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
       - ./workspace/store/spark/wiki:/opt/app/workspace/store/spark/wiki:ro
-      - ./workspace/store/join:/opt/app/workspace/store/join
+      - ./workspace/store/spark/join:/opt/app/workspace/store/spark/join
       - ./spark:/opt/app/spark:ro
       - ./config.yml:/opt/app/config.yml:ro
       - ./requirements.txt:/opt/app/requirements.txt:ro
@@ -234,7 +234,7 @@ services:
       - ./workspace/store/text:/opt/app/workspace/store/text:ro
       - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
       - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
-      - ./workspace/store/join:/opt/app/workspace/store/join:ro
+      - ./workspace/store/spark/join:/opt/app/workspace/store/spark/join:ro
       - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index
       - ./workspace/store/index:/opt/app/workspace/store/index:ro
       - ./lucene_indexer:/opt/app/lucene_indexer:ro
@@ -263,7 +263,7 @@ services:
       - ./workspace/store/text:/opt/app/workspace/store/text:ro
       - ./workspace/store/entities:/opt/app/workspace/store/entities:ro
       - ./workspace/store/spark/entities:/opt/app/workspace/store/spark/entities:ro
-      - ./workspace/store/join:/opt/app/workspace/store/join:ro
+      - ./workspace/store/spark/join:/opt/app/workspace/store/spark/join:ro
       - ./workspace/store/lucene_index:/opt/app/workspace/store/lucene_index
       - ./lucene_indexer:/opt/app/lucene_indexer:ro
       - ./indexer:/opt/app/indexer:ro
@@ -281,7 +281,7 @@ services:
       - --entities
       - /opt/app/workspace/store/spark/entities/entities.tsv
       - --wiki-join
-      - /opt/app/workspace/store/join/html_wiki.tsv
+      - /opt/app/workspace/store/spark/join/html_wiki.tsv
       - --output
       - /opt/app/workspace/store/lucene_index
     user: "0:0"

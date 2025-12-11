@@ -29,3 +29,18 @@
 {"ts": 1765491378.0038443, "event": "start", "entities": "/opt/app/workspace/store/entities/entities2.tsv", "wiki": "/opt/app/workspace/store/spark/wiki", "out": "/opt/app/workspace/store/spark/join"}
 {"ts": 1765491382.6283371, "event": "entities_loaded", "path": "/opt/app/workspace/store/entities/entities2.tsv"}
 {"ts": 1765491426.5073245, "event": "normalization", "entities_seen": 12902199, "empty_norm_values": 105135, "entities_used": 12797064}
+{"ts": 1765492025.6028554, "event": "start", "entities": "/opt/app/workspace/store/entities/entities2.tsv", "wiki": "/opt/app/workspace/store/spark/wiki", "out": "/opt/app/workspace/store/spark/join", "enrichment": false}
+{"ts": 1765492030.2936375, "event": "entities_loaded", "path": "/opt/app/workspace/store/entities/entities2.tsv"}
+{"ts": 1765492073.9341302, "event": "normalization", "entities_seen": 12902199, "empty_norm_values": 105135, "entities_used": 12797064}
+{"ts": 1765492305.693065, "event": "start", "entities": "/opt/app/workspace/store/entities/entities2.tsv", "wiki": "/opt/app/workspace/store/spark/wiki", "out": "/opt/app/workspace/store/spark/join", "enrichment": false}
+{"ts": 1765492310.5511, "event": "entities_loaded", "path": "/opt/app/workspace/store/entities/entities2.tsv"}
+{"ts": 1765492354.8512292, "event": "normalization", "entities_seen": 12902199, "empty_norm_values": 105135, "entities_used": 12797064}
+{"ts": 1765492355.0426273, "event": "join_stats_skipped", "stats_disabled": true, "reason": "JOIN_STATS=false", "total_entities_estimate": 12797064}
+{"ts": 1765492574.6223142, "event": "start", "entities": "/opt/app/workspace/store/entities/entities2.tsv", "wiki": "/opt/app/workspace/store/spark/wiki", "out": "/opt/app/workspace/store/spark/join", "enrichment": true}
+{"ts": 1765492579.3625023, "event": "entities_loaded", "path": "/opt/app/workspace/store/entities/entities2.tsv"}
+{"ts": 1765492624.1360862, "event": "normalization", "entities_seen": 12902199, "empty_norm_values": 105135, "entities_used": 12797064}
+{"ts": 1765492624.339289, "event": "join_stats_skipped", "stats_disabled": true, "reason": "JOIN_STATS=false", "total_entities_estimate": 12797064}
+{"ts": 1765493436.2923994, "event": "start", "entities": "/opt/app/workspace/store/entities/entities2.tsv", "wiki": "/opt/app/workspace/store/spark/wiki", "out": "/opt/app/workspace/store/spark/join", "enrichment": true, "merge_output": false}
+{"ts": 1765493440.9431078, "event": "entities_loaded", "path": "/opt/app/workspace/store/entities/entities2.tsv"}
+{"ts": 1765493485.131879, "event": "normalization", "entities_seen": 12902199, "empty_norm_values": 105135, "entities_used": 12797064}
+{"ts": 1765493485.312449, "event": "join_stats_skipped", "stats_disabled": true, "reason": "JOIN_STATS=false", "total_entities_estimate": 12797064}

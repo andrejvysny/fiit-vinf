@@ -85,10 +85,12 @@ def _load_env_args() -> SimpleNamespace:
         entities_max_rows=entities_max_rows,
         partitions=_int_env("JOIN_PARTITIONS", _int_env("PARTITIONS", 64)) or 64,
         log=os.environ.get("JOIN_LOG", "logs/wiki_join.jsonl"),
-        stats_enabled=_bool_env("JOIN_STATS", True),
+        stats_enabled=_bool_env("JOIN_STATS", False),
         dry_run=_bool_env("JOIN_DRY_RUN", False),
         coalesce_output=_bool_env("JOIN_COALESCE_OUTPUT", False),
         max_records_per_file=_int_env("JOIN_MAX_RECORDS_PER_FILE", 2_000_000) or 2_000_000,
+        enrichment_enabled=_bool_env("JOIN_ENRICHMENT", True),
+        merge_output=_bool_env("JOIN_MERGE_OUTPUT", False),
     )
 
 
@@ -103,7 +105,7 @@ def load_entities(spark: SparkSession, path: Path, max_rows: Optional[int] = Non
     return entities_df
 
 
-def load_wiki_data(spark: SparkSession, wiki_dir: Path, logger) -> Dict[str, DataFrame]:
+def load_wiki_data(spark: SparkSession, wiki_dir: Path, logger, load_enrichment: bool = True) -> Dict[str, DataFrame]:
     """
     Load Wikipedia TSV files using lazy evaluation.
 
@@ -125,23 +127,24 @@ def load_wiki_data(spark: SparkSession, wiki_dir: Path, logger) -> Dict[str, Dat
         wiki_data['aliases'] = read_tsv(spark, aliases_path, header=True)
         logger.info(f"Loaded aliases from {aliases_path} (lazy evaluation)")
 
-    # Load categories - NO count() to avoid full scan
-    categories_path = wiki_dir / "categories.tsv"
-    if categories_path.exists():
-        wiki_data['categories'] = read_tsv(spark, categories_path, header=True)
-        logger.info(f"Loaded categories from {categories_path} (lazy evaluation)")
+    if load_enrichment:
+        # Load categories - NO count() to avoid full scan
+        categories_path = wiki_dir / "categories.tsv"
+        if categories_path.exists():
+            wiki_data['categories'] = read_tsv(spark, categories_path, header=True)
+            logger.info(f"Loaded categories from {categories_path} (lazy evaluation)")
 
-    # Load abstracts - NO count() to avoid full scan
-    abstracts_path = wiki_dir / "abstract.tsv"
-    if abstracts_path.exists():
-        wiki_data['abstracts'] = read_tsv(spark, abstracts_path, header=True)
-        logger.info(f"Loaded abstracts from {abstracts_path} (lazy evaluation)")
+        # Load abstracts - NO count() to avoid full scan
+        abstracts_path = wiki_dir / "abstract.tsv"
+        if abstracts_path.exists():
+            wiki_data['abstracts'] = read_tsv(spark, abstracts_path, header=True)
+            logger.info(f"Loaded abstracts from {abstracts_path} (lazy evaluation)")
 
-    # Load infobox (optional) - NO count()
-    infobox_path = wiki_dir / "infobox.tsv"
-    if infobox_path.exists():
-        wiki_data['infobox'] = read_tsv(spark, infobox_path, header=True)
-        logger.info(f"Loaded infobox from {infobox_path} (lazy evaluation)")
+        # Load infobox (optional) - NO count()
+        infobox_path = wiki_dir / "infobox.tsv"
+        if infobox_path.exists():
+            wiki_data['infobox'] = read_tsv(spark, infobox_path, header=True)
+            logger.info(f"Loaded infobox from {infobox_path} (lazy evaluation)")
 
     return wiki_data
 
@@ -597,7 +600,14 @@ def main() -> int:
     log_path = Path(args.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     struct_logger = StructuredLogger(log_path)
-    struct_logger.log("start", entities=args.entities, wiki=args.wiki, out=args.out)
+    struct_logger.log(
+        "start",
+        entities=args.entities,
+        wiki=args.wiki,
+        out=args.out,
+        enrichment=args.enrichment_enabled,
+        merge_output=args.merge_output
+    )
 
     # Paths
     entities_path = Path(args.entities)
@@ -636,7 +646,11 @@ def main() -> int:
 
         # Load Wikipedia data - NO count() calls (streaming optimization)
         logger.info("Loading Wikipedia data (lazy evaluation)...")
-        wiki_data = load_wiki_data(spark, wiki_dir, logger)
+        if args.enrichment_enabled:
+            logger.info("Advanced enrichment joins ENABLED (categories/abstracts will be attached).")
+        else:
+            logger.info("Advanced enrichment joins DISABLED (skipping categories/abstracts for faster run).")
+        wiki_data = load_wiki_data(spark, wiki_dir, logger, load_enrichment=args.enrichment_enabled)
 
         if 'pages' not in wiki_data:
             logger.error("Wikipedia pages not found")
@@ -707,37 +721,50 @@ def main() -> int:
             logger.info("STARTING FILE WRITES")
             logger.info(f"Total entities to write: {entity_count:,}")
             logger.info(f"Output directory: {output_dir}")
-            logger.info(f"Write mode: {'COALESCE(1)' if args.coalesce_output else 'MERGE_PARTS'}")
+            writer_mode = "COALESCE(1)" if args.coalesce_output else ("MERGE_PARTS" if args.merge_output else "PARTS_ONLY")
+            logger.info(f"Write mode: {writer_mode}")
             logger.info("=" * 60)
             # Write main join results (includes wiki_abstract and wiki_categories)
             try:
                 logger.info("Enriching join with categories/abstracts for output...")
+
+                join_output_base = output_dir / "html_wiki.tsv"
+                join_output_parts = Path(str(join_output_base) + ".parts")
+                join_target_path = join_output_base if args.merge_output or args.coalesce_output else join_output_parts
+
                 joined_df = enrich_join_with_wiki_content(
                     join_base_df,
                     wiki_data.get('categories'),
                     wiki_data.get('abstracts')
                 )
 
-                logger.info("Writing main join results (html_wiki.tsv)...")
-                output_path = output_dir / "html_wiki.tsv"
+                logger.info(f"Writing main join results to {join_target_path}...")
                 write_tsv(
                     joined_df,
-                    output_path,
+                    join_target_path,
                     ["doc_id", "entity_type", "entity_value", "norm_value",
                      "wiki_page_id", "wiki_title", "wiki_abstract", "wiki_categories",
                      "join_key", "confidence"],
                     header=True,
                     single_file=args.coalesce_output,
                     max_records_per_file=args.max_records_per_file,
-                    merge_after_write=not args.coalesce_output  # parallel write then merge to single TSV
+                    merge_after_write=args.merge_output and not args.coalesce_output  # merge only when requested
                 )
                 # Validate file was created
-                if output_path.exists():
-                    file_size = output_path.stat().st_size
-                    logger.info(f"✓ Wrote join results to {output_path} ({file_size:,} bytes)")
+                if args.merge_output or args.coalesce_output:
+                    if join_output_base.exists():
+                        file_size = join_output_base.stat().st_size
+                        logger.info(f"✓ Wrote join results to {join_output_base} ({file_size:,} bytes)")
+                    else:
+                        logger.error(f"✗ FAILED: Output file not created: {join_output_base}")
+                        raise FileNotFoundError(f"Expected output file not found: {join_output_base}")
                 else:
-                    logger.error(f"✗ FAILED: Output file not created: {output_path}")
-                    raise FileNotFoundError(f"Expected output file not found: {output_path}")
+                    part_files = list(join_output_parts.glob("part-*"))
+                    if part_files:
+                        logger.info(f"✓ Wrote join part files to {join_output_parts} (count={len(part_files)})")
+                    else:
+                        logger.error(f"✗ FAILED: No part files written under {join_output_parts}")
+                        raise FileNotFoundError(f"No part files found under {join_output_parts}")
             except Exception as e:
                 logger.error(f"✗ FAILED to write main join results: {e}")
                 logger.exception("Full traceback:")
@@ -768,23 +795,32 @@ def main() -> int:
                     F.sum(F.when(F.col("entity_type") == "LICENSE", 1).otherwise(0)).alias("num_licenses_joined"),
                     F.sum(F.when(F.col("entity_type") == "LANG_STATS", 1).otherwise(0)).alias("num_langs_joined")
                 )
-                agg_path = output_dir / "html_wiki_agg.tsv"
+                agg_output_base = output_dir / "html_wiki_agg.tsv"
+                agg_output_parts = Path(str(agg_output_base) + ".parts")
+                agg_target_path = agg_output_base if args.merge_output or args.coalesce_output else agg_output_parts
                 write_tsv(
-                    doc_agg, agg_path,
+                    doc_agg, agg_target_path,
                     ["doc_id", "joined_page_ids", "num_joined_pages",
                      "num_topics_joined", "num_licenses_joined", "num_langs_joined"],
                     header=True,
                     single_file=args.coalesce_output,
                     max_records_per_file=args.max_records_per_file,
-                    merge_after_write=not args.coalesce_output
+                    merge_after_write=args.merge_output and not args.coalesce_output
                 )
                 # Validate file was created
-                if agg_path.exists():
-                    file_size = agg_path.stat().st_size
-                    logger.info(f"✓ Wrote document aggregates to {agg_path} ({file_size:,} bytes)")
+                if args.merge_output or args.coalesce_output:
+                    if agg_output_base.exists():
+                        file_size = agg_output_base.stat().st_size
+                        logger.info(f"✓ Wrote document aggregates to {agg_output_base} ({file_size:,} bytes)")
+                    else:
+                        logger.error(f"✗ FAILED: Aggregates file not created: {agg_output_base}")
                 else:
-                    logger.error(f"✗ FAILED: Aggregates file not created: {agg_path}")
-                    raise FileNotFoundError(f"Expected aggregates file not found: {agg_path}")
+                    part_files = list(agg_output_parts.glob("part-*"))
+                    if part_files:
+                        logger.info(f"✓ Wrote aggregate part files to {agg_output_parts} (count={len(part_files)})")
+                    else:
+                        logger.error(f"✗ FAILED: No aggregate part files written under {agg_output_parts}")
+                        raise FileNotFoundError(f"No aggregate part files found under {agg_output_parts}")
             except Exception as e:
                 logger.error(f"✗ FAILED to write document aggregates: {e}")
                 logger.exception("Full traceback:")
@@ -804,8 +840,10 @@ def main() -> int:
             },
             "outputs": {
                 "join": str(output_dir / "html_wiki.tsv"),
+                "join_parts": str(output_dir / "html_wiki.tsv.parts"),
                 "stats": str(output_dir / "join_stats.json") if args.stats_enabled else None,
                 "aggregates": str(output_dir / "html_wiki_agg.tsv"),
+                "aggregates_parts": str(output_dir / "html_wiki_agg.tsv.parts"),
             },
             "statistics": stats,
             "spark_config": {
@@ -813,6 +851,8 @@ def main() -> int:
                 "partitions": args.partitions,
             },
             "features": {
+                "enrichment_enabled": args.enrichment_enabled,
+                "merge_output": args.merge_output,
                 "single_file_output": args.coalesce_output,
                 "max_records_per_file": args.max_records_per_file
             }
@@ -828,6 +868,7 @@ def main() -> int:
         pipeline_stats.set_config(
             partitions=args.partitions,
             entities_max_rows=args.entities_max_rows,
+            enrichment_enabled=args.enrichment_enabled,
             single_file_output=args.coalesce_output,
             max_records_per_file=args.max_records_per_file
         )
@@ -838,9 +879,9 @@ def main() -> int:
             total_items=entity_count
         )
         pipeline_stats.set_outputs(
-            join_file=str(output_dir / "html_wiki.tsv"),
+            join_file=str(output_dir / "html_wiki.tsv" if args.merge_output or args.coalesce_output else output_dir / "html_wiki.tsv.parts"),
             stats_file=str(output_dir / "join_stats.json") if args.stats_enabled else None,
-            aggregates_file=str(output_dir / "html_wiki_agg.tsv")
+            aggregates_file=str(output_dir / "html_wiki_agg.tsv" if args.merge_output or args.coalesce_output else output_dir / "html_wiki_agg.tsv.parts")
         )
         pipeline_stats.set_nested("join_statistics", "stats_enabled", args.stats_enabled)
         if args.stats_enabled:
@@ -894,18 +935,52 @@ def main() -> int:
         logger.info("=" * 60)
         output_files_ok = True
         if not args.dry_run:
-            expected_files = [
-                (output_dir / "html_wiki.tsv", "Main join results"),
-                (output_dir / "html_wiki_agg.tsv", "Document aggregates"),
-            ]
-            if args.stats_enabled:
-                expected_files.append((output_dir / "join_stats.json", "Join statistics"))
-            for file_path, description in expected_files:
-                if file_path.exists():
-                    size_mb = file_path.stat().st_size / (1024 * 1024)
-                    logger.info(f"✓ {description}: {file_path} ({size_mb:.2f} MB)")
+            join_output_base = output_dir / "html_wiki.tsv"
+            join_output_parts = Path(str(join_output_base) + ".parts")
+            agg_output_base = output_dir / "html_wiki_agg.tsv"
+            agg_output_parts = Path(str(agg_output_base) + ".parts")
+
+            # Validate main join output
+            if args.merge_output or args.coalesce_output:
+                if join_output_base.exists():
+                    size_mb = join_output_base.stat().st_size / (1024 * 1024)
+                    logger.info(f"✓ Main join results: {join_output_base} ({size_mb:.2f} MB)")
                 else:
-                    logger.error(f"✗ MISSING: {description}: {file_path}")
+                    logger.error(f"✗ MISSING: Main join results: {join_output_base}")
+                    output_files_ok = False
+            else:
+                parts = list(join_output_parts.glob("part-*"))
+                if parts:
+                    total_size = sum(p.stat().st_size for p in parts) / (1024 * 1024)
+                    logger.info(f"✓ Main join parts: {join_output_parts} (files={len(parts)}, total={total_size:.2f} MB)")
+                else:
+                    logger.error(f"✗ MISSING: Main join parts under {join_output_parts}")
+                    output_files_ok = False
+
+            # Validate aggregates output
+            if args.merge_output or args.coalesce_output:
+                if agg_output_base.exists():
+                    size_mb = agg_output_base.stat().st_size / (1024 * 1024)
+                    logger.info(f"✓ Document aggregates: {agg_output_base} ({size_mb:.2f} MB)")
+                else:
+                    logger.error(f"✗ MISSING: Document aggregates: {agg_output_base}")
+                    output_files_ok = False
+            else:
+                parts = list(agg_output_parts.glob("part-*"))
+                if parts:
+                    total_size = sum(p.stat().st_size for p in parts) / (1024 * 1024)
+                    logger.info(f"✓ Aggregate parts: {agg_output_parts} (files={len(parts)}, total={total_size:.2f} MB)")
+                else:
+                    logger.error(f"✗ MISSING: Aggregate parts under {agg_output_parts}")
+                    output_files_ok = False
+
+            if args.stats_enabled:
+                stats_path = output_dir / "join_stats.json"
+                if stats_path.exists():
+                    size_mb = stats_path.stat().st_size / (1024 * 1024)
+                    logger.info(f"✓ Join statistics: {stats_path} ({size_mb:.2f} MB)")
+                else:
+                    logger.error(f"✗ MISSING: Join statistics: {stats_path}")
                     output_files_ok = False
 
             if not output_files_ok:

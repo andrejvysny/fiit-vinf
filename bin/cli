@@ -295,6 +295,10 @@ cmd_join() {
     # Defaults
     local ENTITIES_MAX_ROWS=""
     local PARTITIONS="${PARTITIONS:-64}"
+    local JOIN_ENRICHMENT="${JOIN_ENRICHMENT:-true}"
+    local JOIN_MERGE_OUTPUT="${JOIN_MERGE_OUTPUT:-false}"
+    local JOIN_STATS="${JOIN_STATS:-false}"
+    local JOIN_OUT="${JOIN_OUT:-/opt/app/workspace/store/spark/join}"
     local SHOW_HELP=false
 
     # Parse arguments
@@ -354,6 +358,10 @@ EOF
     echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
     echo "Partitions: ${PARTITIONS}"
     [[ -n "${ENTITIES_MAX_ROWS}" ]] && echo "Max Entity Rows: ${ENTITIES_MAX_ROWS}"
+    echo "Enrichment joins (categories/abstracts): ${JOIN_ENRICHMENT}"
+    echo "Merge output files: ${JOIN_MERGE_OUTPUT}"
+    echo "Statistics generation: ${JOIN_STATS}"
+    echo "Output dir: ${JOIN_OUT}"
     echo ""
 
     cd "${PROJECT_ROOT}"
@@ -362,6 +370,10 @@ EOF
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
         -e PARTITIONS="${PARTITIONS}" \
+        -e JOIN_ENRICHMENT="${JOIN_ENRICHMENT:-false}" \
+        -e JOIN_MERGE_OUTPUT="${JOIN_MERGE_OUTPUT}" \
+        -e JOIN_STATS="${JOIN_STATS}" \
+        -e JOIN_OUT="${JOIN_OUT}" \
         -e JOIN_ENTITIES_MAX_ROWS="${ENTITIES_MAX_ROWS}" \
         -e JOIN_PARTITIONS="${PARTITIONS}" \
         -e JOIN_WIKI="/opt/app/workspace/store/spark/wiki" \
