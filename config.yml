@@ -103,8 +103,8 @@ crawler:
 extractor:
   input_root: "store/html"
   outputs:
-    text: "store/text"
-    entities: "store/entities/entities2.tsv"
+    text: "store/spark/html/text"
+    entities: "store/spark/html/entities/entities.tsv"
   enable_text: true
   enable_entities: true
   force: false

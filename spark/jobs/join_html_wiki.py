@@ -15,7 +15,6 @@ Supported entity types:
 - README: Keywords from README files
 """
 
-import argparse
 import json
 import logging
 import os
@@ -25,9 +24,10 @@ import re
 from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Optional
 
-from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import *
 from pyspark.sql.window import Window
@@ -42,59 +42,37 @@ from spark.lib.utils import StructuredLogger, write_manifest
 from spark.lib.stats import PipelineStats, save_pipeline_summary
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Join HTML entities with Wikipedia canonical data"
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: Optional[int] = None) -> Optional[int]:
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
+def _load_env_args() -> SimpleNamespace:
+    """Load runtime options from environment variables."""
+    entities_max_rows = _int_env("JOIN_ENTITIES_MAX_ROWS", _int_env("SAMPLE"))
+    return SimpleNamespace(
+        entities=os.environ.get("JOIN_ENTITIES", "/opt/app/workspace/store/spark/entities/entities.tsv"),
+        wiki=os.environ.get("JOIN_WIKI", "/opt/app/workspace/store/wiki"),
+        out=os.environ.get("JOIN_OUT", "/opt/app/workspace/store/join"),
+        entities_max_rows=entities_max_rows,
+        partitions=_int_env("JOIN_PARTITIONS", _int_env("PARTITIONS", 64)) or 64,
+        log=os.environ.get("JOIN_LOG", "logs/wiki_join.jsonl"),
+        dry_run=_bool_env("JOIN_DRY_RUN", False),
+        coalesce_output=_bool_env("JOIN_COALESCE_OUTPUT", False),
+        max_records_per_file=_int_env("JOIN_MAX_RECORDS_PER_FILE", 2_000_000) or 2_000_000,
     )
-    parser.add_argument(
-        '--entities',
-        required=True,
-        help='Path to entities.tsv from HTML extraction'
-    )
-    parser.add_argument(
-        '--wiki',
-        required=True,
-        help='Directory with Wikipedia TSV files'
-    )
-    parser.add_argument(
-        '--out',
-        default='workspace/store/join',
-        help='Output directory for join results'
-    )
-    parser.add_argument(
-        '--entities-max-rows',
-        type=int,
-        help='Maximum number of entity rows to process (for development)'
-    )
-    parser.add_argument(
-        '--partitions',
-        type=int,
-        default=64,
-        help='Number of Spark partitions'
-    )
-    parser.add_argument(
-        '--log',
-        default='logs/wiki_join.jsonl',
-        help='Log file path'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='Preview without writing outputs'
-    )
-    parser.add_argument(
-        '--coalesce-output',
-        action='store_true',
-        help='Write single TSV per output (shuffle-heavy). Default writes partitioned outputs.'
-    )
-    parser.add_argument(
-        '--max-records-per-file',
-        type=int,
-        default=2_000_000,
-        help='Limit records per output part when not coalescing.'
-    )
-    return parser.parse_args()
 
 
 def load_entities(spark: SparkSession, path: Path, max_rows: Optional[int] = None) -> DataFrame:
@@ -291,46 +269,6 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
     return normalize_title(value)
 
 
-def calculate_confidence(row) -> float:
-    """
-    Calculate confidence score for a match.
-    Factors:
-    - Direct match vs alias
-    - Category hints
-    - Case sensitivity
-    """
-    confidence = 0.6  # Base confidence
-
-    # Match type bonus
-    try:
-        match_type = row['match_type'] if hasattr(row, '__getitem__') else getattr(row, 'match_type', None)
-        if match_type == 'direct':
-            confidence += 0.2
-        elif match_type == 'alias':
-            confidence += 0.1
-    except (KeyError, AttributeError):
-        pass
-
-    # Exact case match bonus
-    try:
-        entity_value = row['entity_value'] if hasattr(row, '__getitem__') else getattr(row, 'entity_value', '')
-        wiki_title = row['wiki_title'] if hasattr(row, '__getitem__') else getattr(row, 'wiki_title', '')
-        if entity_value and wiki_title and entity_value.lower() == wiki_title.lower():
-            confidence += 0.1
-    except (KeyError, AttributeError):
-        pass
-
-    # Category hint bonus (would need categories joined)
-    try:
-        has_relevant_category = row['has_relevant_category'] if hasattr(row, '__getitem__') else getattr(row, 'has_relevant_category', False)
-        if has_relevant_category:
-            confidence += 0.1
-    except (KeyError, AttributeError):
-        pass
-
-    return min(confidence, 1.0)
-
-
 def join_entities_with_wiki(
     entities_df: DataFrame,
     canonical_df: DataFrame,
@@ -442,37 +380,23 @@ def join_entities_with_wiki(
         joined_df = joined_df.withColumn("wiki_abstract", F.lit(""))
 
     # Calculate confidence scores with labels
-    def compute_confidence_label(row) -> str:
-        """Compute confidence label: exact+cat, alias+cat, exact+abs, alias+abs."""
-        match_type = row['match_type'] if 'match_type' in row else None
-        has_cat = row['has_relevant_category'] if 'has_relevant_category' in row else False
-        has_abs = bool(row['wiki_abstract']) if 'wiki_abstract' in row else False
-
-        if not match_type:
-            return None
-
-        is_exact = match_type == 'direct'
-
-        if has_cat:
-            return "exact+cat" if is_exact else "alias+cat"
-        elif has_abs:
-            return "exact+abs" if is_exact else "alias+abs"
-        else:
-            return "exact" if is_exact else "alias"
-
-    confidence_label_udf = F.udf(compute_confidence_label, StringType())
-
-    joined_df = joined_df.withColumn(
-        "confidence",
+    confidence_expr = F.when(
+        F.col("wiki_page_id").isNull(),
+        F.lit(None).cast(StringType())
+    ).otherwise(
         F.when(
-            F.col("wiki_page_id").isNotNull(),
-            confidence_label_udf(F.struct(
-                F.col("match_type"),
-                F.col("has_relevant_category"),
-                F.col("wiki_abstract")
-            ))
-        ).otherwise(None)
+            F.col("match_type") == "direct",
+            F.when(F.col("has_relevant_category"), F.lit("exact+cat"))
+             .when(F.col("wiki_abstract") != "", F.lit("exact+abs"))
+             .otherwise(F.lit("exact"))
+        ).otherwise(
+            F.when(F.col("has_relevant_category"), F.lit("alias+cat"))
+             .when(F.col("wiki_abstract") != "", F.lit("alias+abs"))
+             .otherwise(F.lit("alias"))
+        )
     )
+
+    joined_df = joined_df.withColumn("confidence", confidence_expr)
 
     # Select final columns (including wiki_abstract and wiki_categories)
     final_df = joined_df.select(
@@ -550,7 +474,7 @@ def generate_statistics(joined_df: DataFrame, logger) -> Dict:
 
 def main() -> int:
     """Main entry point."""
-    args = parse_args()
+    args = _load_env_args()
     start_time = time.time()
 
     # Configure logging

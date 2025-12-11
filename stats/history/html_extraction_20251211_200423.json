@@ -1,0 +1,56 @@
+{
+  "stage": "html_extraction",
+  "run_id": "20251211_200423",
+  "start_time": "2025-12-11T20:04:23.149047",
+  "end_time": "2025-12-11T20:04:23.149165",
+  "duration_seconds": 0.0,
+  "status": "completed",
+  "config": {
+    "mode": "spark_dataframe",
+    "partitions": 128,
+    "force": false,
+    "sample": 100000
+  },
+  "inputs": {
+    "input_dir": "/opt/app/workspace/store/html",
+    "total_files": 28353,
+    "total_items": 28353
+  },
+  "outputs": {
+    "text_files_written": 28353,
+    "entities_written": 10585183,
+    "errors": 0,
+    "entities_dir": "/opt/app/workspace/store/entities",
+    "text_dir": "/opt/app/workspace/store/text"
+  },
+  "entities": {
+    "STAR_COUNT": {
+      "count": 26567
+    },
+    "FORK_COUNT": {
+      "count": 12622
+    },
+    "README": {
+      "count": 7474
+    },
+    "LICENSE": {
+      "count": 7582
+    },
+    "TOPICS": {
+      "count": 14004
+    },
+    "URL": {
+      "count": 28349
+    },
+    "EMAIL": {
+      "count": 1513
+    }
+  },
+  "performance": {
+    "files_per_second": 103.18,
+    "entities_per_second": 38519.96,
+    "success_rate": 100.0,
+    "error_count": 0
+  },
+  "errors": []
+}

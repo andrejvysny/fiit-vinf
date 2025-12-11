@@ -1,0 +1,32 @@
+{
+  "generated_at": "2025-12-11T20:04:23.150619",
+  "stages": {
+    "html_extraction": {
+      "status": "completed",
+      "duration_seconds": 0.0,
+      "run_id": "20251211_200423",
+      "start_time": "2025-12-11T20:04:23.149047",
+      "end_time": "2025-12-11T20:04:23.149165",
+      "files_processed": 28353,
+      "text_files_written": 28353,
+      "total_entities": 10585183,
+      "entity_types": [
+        "STAR_COUNT",
+        "FORK_COUNT",
+        "README",
+        "LICENSE",
+        "TOPICS",
+        "URL",
+        "EMAIL"
+      ]
+    }
+  },
+  "totals": {
+    "total_duration_seconds": 0.0,
+    "total_entities_extracted": 10585183,
+    "total_wiki_pages": 0,
+    "total_html_files": 28353,
+    "total_joins": 0,
+    "overall_status": "completed"
+  }
+}

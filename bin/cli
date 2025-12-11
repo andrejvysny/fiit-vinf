@@ -105,7 +105,6 @@ cmd_extract() {
     check_docker
 
     # Defaults
-    local SPARK_ARGS=""
     local SAMPLE=""
     local PARTITIONS="${PARTITIONS:-128}"
     local SHOW_HELP=false
@@ -114,29 +113,21 @@ cmd_extract() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
-                SHOW_HELP=true
-                shift
-                ;;
+            SHOW_HELP=true
+            shift
+            ;;
             --sample|-s)
                 SAMPLE="$2"
-                SPARK_ARGS="$SPARK_ARGS --sample $2"
                 shift 2
                 ;;
             --partitions|-p)
                 PARTITIONS="$2"
                 shift 2
                 ;;
-            --force|-f)
-                SPARK_ARGS="$SPARK_ARGS --force"
-                shift
-                ;;
-            --dry-run)
-                SPARK_ARGS="$SPARK_ARGS --dry-run"
-                shift
-                ;;
             *)
-                SPARK_ARGS="$SPARK_ARGS $1"
-                shift
+                print_error "Unknown option for extract: $1"
+                echo "Use --help for usage."
+                exit 1
                 ;;
         esac
     done
@@ -150,8 +141,6 @@ Usage: bin/cli extract [options]
 Options:
   -s, --sample N      Process only first N files (for testing)
   -p, --partitions N  Number of Spark partitions (default: 128)
-  -f, --force         Overwrite existing outputs
-  --dry-run           List files without processing
   -h, --help          Show this help
 
 Examples:
@@ -162,20 +151,10 @@ EOF
         return 0
     fi
 
-    # Set memory based on data size
-    if [[ -n "${SAMPLE}" ]] && [[ "${SAMPLE}" -le 500 ]]; then
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-2g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-1g}"
-        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-1g}"
-    elif [[ -n "${SAMPLE}" ]] && [[ "${SAMPLE}" -le 5000 ]]; then
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
-        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
-    else
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-6g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
-        export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
-    fi
+
+    export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-6g}"
+    export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
 
     print_header "Spark HTML Extraction"
     echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
@@ -185,12 +164,13 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run  \
+    docker compose -f "${COMPOSE_FILE}" run --rm \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
         -e PARTITIONS="${PARTITIONS}" \
-        -e SPARK_ARGS="${SPARK_ARGS}" \
+        -e HTML_SAMPLE="${SAMPLE}" \
+        -e HTML_PARTITIONS="${PARTITIONS}" \
         spark-extract
 
     print_success "HTML extraction completed"
@@ -205,6 +185,7 @@ cmd_wiki() {
 
     local SHOW_HELP=false
     local SAMPLE_PAGES=""
+    local PARTITIONS="${PARTITIONS:-512}"
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -215,6 +196,10 @@ cmd_wiki() {
                 ;;
             -s|--sample|--wiki-max-pages|--max-wiki-pages)
                 SAMPLE_PAGES="$2"
+                shift 2
+                ;;
+            -p|--partitions)
+                PARTITIONS="$2"
                 shift 2
                 ;;
             *)
@@ -233,6 +218,7 @@ Usage: bin/cli wiki [options]
 
 Options:
   -s, --sample N          Limit wiki pages for a test run (applies --wiki-max-pages)
+  -p, --partitions N      Number of Spark partitions (default: 512)
   -h, --help              Show this help
 
 Outputs:
@@ -255,7 +241,7 @@ Preconfigured Spark settings (edit bin/cli to change):
   - Network Timeout: 1200s
   - Heartbeat Interval: 60s
   - Partitions: 512
-  - Flags: --force-spark --no-text --force
+  - Flags: --no-text --force
 EOF
         return 0
     fi
@@ -269,12 +255,6 @@ EOF
     export SPARK_PYTHON_WORKER_MEMORY="4g"
     export PARTITIONS="512"
 
-    local WIKI_ARGS="--force-spark --no-text --force"
-
-    if [[ -n "${SAMPLE_PAGES}" ]]; then
-        WIKI_ARGS="${WIKI_ARGS} --wiki-max-pages ${SAMPLE_PAGES}"
-    fi
-
     print_header "Spark Wikipedia Extraction (Preconfigured)"
     echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"
     echo "Executor Memory: ${SPARK_EXECUTOR_MEMORY}"
@@ -287,7 +267,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run  \
+    docker compose -f "${COMPOSE_FILE}" run --rm \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
@@ -295,7 +275,10 @@ EOF
         -e SPARK_EXECUTOR_HEARTBEAT_INTERVAL="${SPARK_EXECUTOR_HEARTBEAT_INTERVAL}" \
         -e SPARK_PYTHON_WORKER_MEMORY="${SPARK_PYTHON_WORKER_MEMORY}" \
         -e PARTITIONS="${PARTITIONS}" \
-        -e WIKI_ARGS="${WIKI_ARGS}" \
+        -e WIKI_MAX_PAGES="${SAMPLE_PAGES}" \
+        -e WIKI_PARTITIONS="${PARTITIONS}" \
+        -e WIKI_NO_TEXT="true" \
+        -e WIKI_FORCE="true" \
         spark-wiki
 
     print_success "Wikipedia extraction completed"
@@ -309,7 +292,6 @@ cmd_join() {
     check_docker
 
     # Defaults
-    local JOIN_ARGS=""
     local ENTITIES_MAX_ROWS=""
     local PARTITIONS="${PARTITIONS:-64}"
     local SHOW_HELP=false
@@ -321,22 +303,18 @@ cmd_join() {
                 SHOW_HELP=true
                 shift
                 ;;
-            --entities-max-rows|-m)
+            --sample|-s|--entities-max-rows|-m)
                 ENTITIES_MAX_ROWS="$2"
-                JOIN_ARGS="$JOIN_ARGS --entities-max-rows $2"
                 shift 2
                 ;;
             --partitions|-p)
                 PARTITIONS="$2"
                 shift 2
                 ;;
-            --dry-run)
-                JOIN_ARGS="$JOIN_ARGS --dry-run"
-                shift
-                ;;
             *)
-                JOIN_ARGS="$JOIN_ARGS $1"
-                shift
+                print_error "Unknown option for join: $1"
+                echo "Use --help for usage."
+                exit 1
                 ;;
         esac
     done
@@ -348,9 +326,8 @@ Join extracted entities with Wikipedia data.
 Usage: bin/cli join [options]
 
 Options:
-  -m, --entities-max-rows N  Limit entity rows (for testing)
+  -s, --sample N             Limit entity rows (for testing)
   -p, --partitions N         Number of Spark partitions (default: 64)
-  --dry-run                  Show what would be joined
   -h, --help                 Show this help
 
 Inputs:
@@ -379,12 +356,13 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run \
+    docker compose -f "${COMPOSE_FILE}" run --rm \
         -e SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY}" \
         -e SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY}" \
         -e SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE}" \
         -e PARTITIONS="${PARTITIONS}" \
-        -e JOIN_ARGS="${JOIN_ARGS}" \
+        -e JOIN_ENTITIES_MAX_ROWS="${ENTITIES_MAX_ROWS}" \
+        -e JOIN_PARTITIONS="${PARTITIONS}" \
         spark-join
 
     print_success "Entity-Wiki join completed"
@@ -460,7 +438,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run  lucene-build
+    docker compose -f "${COMPOSE_FILE}" run --rm lucene-build
 
     print_success "Lucene index build completed"
 }
@@ -579,7 +557,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run  \
+    docker compose -f "${COMPOSE_FILE}" run --rm \
         -e QUERY="${QUERY}" \
         -e QUERY_TYPE="${QUERY_TYPE}" \
         -e TOP="${TOP}" \
@@ -639,7 +617,7 @@ EOF
     echo ""
 
     cd "${PROJECT_ROOT}"
-    docker compose -f "${COMPOSE_FILE}" run  lucene-compare
+    docker compose -f "${COMPOSE_FILE}" run --rm lucene-compare
 
     print_success "Comparison completed"
 }

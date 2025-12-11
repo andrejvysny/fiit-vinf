@@ -1,20 +1,11 @@
 #!/usr/bin/env python3
 """Spark HTML extraction job - extracts text and entities from crawled HTML.
 
-Uses DataFrame API with mapPartitions for efficient parallel processing.
-No pandas/numpy dependencies - pure Spark and native Python.
-
-Architecture:
-- DataFrame API for file paths distribution
-- mapPartitions for partition-level processing
-- Text files written directly in workers
-- Entities written to partition files, merged on driver
-- Only stats collected to driver (no large data transfer)
+Uses DataFrame API with mapPartitions for efficient parallel processing, configured via environment variables.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import logging
@@ -25,11 +16,12 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator, List, Optional, Sequence, Tuple
 
-from pyspark.sql import SparkSession, Row
+from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import StructType, StructField, StringType, LongType
+from pyspark.sql.types import LongType, StringType, StructField, StructType
 
 # Add project root to path for imports
 sys.path.insert(0, '/opt/app')
@@ -74,85 +66,44 @@ class JobOptions:
     app_name: str
 
 
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Spark HTML extraction job (DataFrame API)"
-    )
-    parser.add_argument(
-        '--config',
-        default='/opt/app/config.yml',
-        help='Path to YAML configuration file'
-    )
-    parser.add_argument(
-        '--input-root', '--in',
-        dest='input_root',
-        help='Override input directory for HTML files'
-    )
-    parser.add_argument(
-        '--text-out',
-        help='Override output directory for text files'
-    )
-    parser.add_argument(
-        '--entities-out', '--out',
-        dest='entities_out',
-        help='Override output path for entities TSV'
-    )
-    parser.add_argument(
-        '--sample',
-        type=int,
-        help='Limit number of files to process'
-    )
-    parser.add_argument(
-        '--limit',
-        type=int,
-        help='Alias for --sample'
-    )
-    parser.add_argument(
-        '--force',
-        action='store_true',
-        help='Overwrite existing output files'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='List files without processing'
-    )
-    parser.add_argument(
-        '--no-text',
-        action='store_true',
-        help='Disable text extraction'
-    )
-    parser.add_argument(
-        '--no-entities',
-        action='store_true',
-        help='Disable entity extraction'
-    )
-    parser.add_argument(
-        '--partitions',
-        type=int,
-        default=64,
-        help='Number of Spark partitions'
-    )
-    parser.add_argument(
-        '--master',
-        default='local[*]',
-        help='Spark master URL'
-    )
-    parser.add_argument(
-        '--app-name',
-        default='HTMLExtractor-DataFrame',
-        help='Spark application name'
-    )
-    parser.add_argument(
-        '--log-level',
-        default='INFO',
-        help='Logging level'
-    )
-    return parser.parse_args(argv)
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _resolve_job_options(args: argparse.Namespace) -> JobOptions:
+def _int_env(name: str, default: Optional[int] = None) -> Optional[int]:
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
+def _load_env_options() -> SimpleNamespace:
+    """Build a namespace of options from environment variables."""
+    return SimpleNamespace(
+        config=os.environ.get("HTML_CONFIG", "/opt/app/config.yml"),
+        input_root=os.environ.get("HTML_INPUT_ROOT"),
+        text_out=os.environ.get("HTML_TEXT_OUT"),
+        entities_out=os.environ.get("HTML_ENTITIES_OUT"),
+        sample=_int_env("HTML_SAMPLE", _int_env("SAMPLE")),
+        limit=_int_env("HTML_LIMIT", _int_env("LIMIT")),
+        force=_bool_env("HTML_FORCE", False),
+        dry_run=_bool_env("HTML_DRY_RUN", False),
+        no_text=_bool_env("HTML_NO_TEXT", False),
+        no_entities=_bool_env("HTML_NO_ENTITIES", False),
+        partitions=_int_env("HTML_PARTITIONS", _int_env("PARTITIONS", 64)) or 64,
+        master=os.environ.get("HTML_MASTER", "local[*]"),
+        app_name=os.environ.get("HTML_APP_NAME", "HTMLExtractor-DataFrame"),
+        log_level=os.environ.get("HTML_LOG_LEVEL", "INFO"),
+    )
+
+
+def _resolve_job_options(args: SimpleNamespace) -> JobOptions:
     """Resolve job options from CLI args and config file."""
     try:
         app_config = load_yaml_config(args.config)
@@ -242,7 +193,7 @@ def process_partition(
     iterator: Iterator[Row],
     input_root: str,
     text_out: Optional[str],
-    entities_parts_dir: str,
+    entities_parts_dir: Optional[str],
     enable_text: bool,
     enable_entities: bool,
     force: bool,
@@ -269,17 +220,20 @@ def process_partition(
 
     input_root_path = Path(input_root)
     text_out_path = Path(text_out) if text_out else None
-    entities_parts_path = Path(entities_parts_dir)
-    entities_parts_path.mkdir(parents=True, exist_ok=True)
+    entities_parts_path = None
+    entity_file_handle = None
 
-    # Create partition-specific entity file with unique ID
-    partition_id = f"{os.getpid()}_{threading.get_ident()}_{uuid.uuid4().hex[:8]}"
-    entity_file = entities_parts_path / f"part-{partition_id}.tsv"
+    if enable_entities and entities_parts_dir:
+        entities_parts_path = Path(entities_parts_dir)
+        entities_parts_path.mkdir(parents=True, exist_ok=True)
+        partition_id = f"{os.getpid()}_{threading.get_ident()}_{uuid.uuid4().hex[:8]}"
+        entity_file = entities_parts_path / f"part-{partition_id}.tsv"
+        entity_file_handle = entity_file.open('w', encoding='utf-8')
 
     # Initialize stats
     stats = {field: 0 for field in STAT_FIELDS}
 
-    with open(entity_file, 'w', encoding='utf-8') as ef:
+    try:
         for input_row in iterator:
             path_str = input_row['file_path']
             path = Path(path_str)
@@ -320,7 +274,7 @@ def process_partition(
                     log.warning("Failed to write text for %s: %s", path, exc)
 
             # Extract entities and write to partition file
-            if enable_entities and not dry_run:
+            if enable_entities and not dry_run and entity_file_handle is not None:
                 try:
                     entities = entity_extractors.extract_all_entities(doc_id, html_content)
                     entity_types = {e[1] for e in entities}
@@ -349,14 +303,17 @@ def process_partition(
                         doc_id_e, type_e, value_e, offsets_e = entity[0], entity[1], entity[2], entity[3]
                         value_e = _sanitize_field(value_e)
                         offsets_e = _sanitize_field(offsets_e)
-                        ef.write(f"{doc_id_e}\t{type_e}\t{value_e}\t{offsets_e}\n")
+                        entity_file_handle.write(f"{doc_id_e}\t{type_e}\t{value_e}\t{offsets_e}\n")
 
                 except Exception as exc:
                     log.warning("Failed to extract entities for %s: %s", path, exc)
 
             stats["files_processed"] += 1
 
-    # Yield stats as Row
+    finally:
+        if entity_file_handle is not None:
+            entity_file_handle.close()
+
     yield Row(**stats)
 
 
@@ -384,6 +341,7 @@ def run_extraction(
     # Setup entities partition directory
     entities_parts_dir = None
     if opts.enable_entities and opts.entities_out:
+        opts.entities_out.parent.mkdir(parents=True, exist_ok=True)
         entities_parts_dir = opts.entities_out.parent / '_entity_parts'
         if entities_parts_dir.exists():
             shutil.rmtree(entities_parts_dir)
@@ -397,7 +355,7 @@ def run_extraction(
     # Create wrapper function that captures configuration
     input_root_str = str(opts.input_root)
     text_out_str = str(opts.text_out) if opts.text_out else None
-    entities_parts_str = str(entities_parts_dir) if entities_parts_dir else "/tmp/entities_parts"
+    entities_parts_str = str(entities_parts_dir) if entities_parts_dir else None
     enable_text = opts.enable_text
     enable_entities = opts.enable_entities
     force = opts.force
@@ -538,7 +496,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     """Main entry point."""
     start_time = time.time()
 
-    args = parse_args(argv)
+    args = _load_env_options()
     logger = _configure_logging(args.log_level)
 
     try:
@@ -548,6 +506,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except Exception as exc:
         logger.error("Failed to resolve options: %s", exc)
         return 1
+
+    if opts.enable_text and opts.text_out:
+        opts.text_out.mkdir(parents=True, exist_ok=True)
+    if opts.enable_entities and opts.entities_out:
+        opts.entities_out.parent.mkdir(parents=True, exist_ok=True)
 
     # Discover HTML files
     logger.info("Discovering HTML files in %s", opts.input_root)

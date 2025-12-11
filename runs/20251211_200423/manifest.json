@@ -1,0 +1,38 @@
+{
+  "timestamp": "2025-12-11T20:04:23.146245",
+  "duration_seconds": 274.8,
+  "code_hash": "9df67da06f38ecc2",
+  "api": "DataFrame",
+  "arguments": {
+    "input_root": "/opt/app/workspace/store/html",
+    "text_out": "/opt/app/workspace/store/text",
+    "entities_out": "/opt/app/workspace/store/entities/entities2.tsv",
+    "limit": 100000,
+    "partitions": 128,
+    "force": false,
+    "dry_run": false
+  },
+  "inputs": {
+    "total_files": 28353,
+    "processed_files": 28353
+  },
+  "outputs": {
+    "files_processed": 28353,
+    "files_skipped": 0,
+    "text_written": 28353,
+    "entities_extracted": 10585183,
+    "stars_found": 26567,
+    "forks_found": 12622,
+    "langs_found": 0,
+    "readme_found": 7474,
+    "license_found": 7582,
+    "topics_found": 14004,
+    "urls_found": 28349,
+    "emails_found": 1513
+  },
+  "spark_config": {
+    "driver_memory": "6g",
+    "executor_memory": "4g",
+    "partitions": 128
+  }
+}

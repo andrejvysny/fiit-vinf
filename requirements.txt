@@ -1,33 +1,4 @@
-# Core dependencies for GitHub Crawler
 
-# HTTP client with HTTP/2 support
 httpx[http2]>=0.27.0
-
-# YAML configuration
 pyyaml>=6.0
 tiktoken>=0.5.0
-# HTML parsing for link extraction
-#beautifulsoup4>=4.12.0
-
-# Note: reppy has build issues on Python 3.13, using urllib.robotparser instead
-
-# Optional: Memory-mapped Bloom filter (more efficient than our basic implementation)
-# pybloomfiltermmap3>=0.5.7
-
-# Optional: For compressed storage (if needed later)
-# zstandard>=0.22.0
-
-# Spark dependencies (match Docker image apache/spark-py:v3.4.0)
-# Note: No pandas/numpy/pyarrow - using pure Spark and native Python
-pyspark==3.4.0
-
-# PyLucene (requires manual installation - see PYLUCENE_INSTALL.md)
-# PyLucene must be built from source with system JDK
-# See: https://lucene.apache.org/pylucene/install.html
-# lucene  # Not pip-installable, requires source build
-
-# Development dependencies
-# pytest>=8.0.0
-# pytest-asyncio>=0.23.0
-# black>=24.0.0
-# mypy>=1.8.0

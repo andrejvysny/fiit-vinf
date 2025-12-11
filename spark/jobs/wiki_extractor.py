@@ -2,8 +2,7 @@
 """
 Spark job for extracting structured data from Wikipedia XML dumps.
 
-Uses DataFrame API with mapPartitions for efficient parallel processing.
-No pandas/numpy dependencies - pure Spark and native Python.
+Uses DataFrame API with mapPartitions for efficient parallel processing, configured via environment variables.
 
 Processes Wikipedia dump files (XML or XML.bz2) to extract:
 - Pages metadata
@@ -18,7 +17,6 @@ All outputs are written as TSV files for downstream processing.
 Reference: https://www.mediawiki.org/wiki/Help:Export#Export_format
 """
 
-import argparse
 import json
 import logging
 import os
@@ -27,9 +25,10 @@ import time
 import shutil
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Iterator, List, Optional, Tuple
 
-from pyspark.sql import SparkSession, DataFrame, Row
+from pyspark.sql import DataFrame, Row, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, LongType,
@@ -55,99 +54,43 @@ from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
 from spark.lib.progress import SparkProgressReporter, JobGroup
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Extract structured data from Wikipedia dumps (DataFrame API)"
+def _bool_env(name: str, default: bool = False) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name: str, default: Optional[int] = None) -> Optional[int]:
+    val = os.environ.get(name)
+    if val is None or val == "":
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
+def _load_env_args() -> SimpleNamespace:
+    """Load runtime options from environment variables."""
+    wiki_max_pages = _int_env("WIKI_MAX_PAGES", _int_env("SAMPLE"))
+    return SimpleNamespace(
+        wiki_in=os.environ.get("WIKI_IN", "/opt/app/wiki_dump"),
+        out=os.environ.get("WIKI_OUT", "/opt/app/workspace/store/wiki"),
+        wiki_max_pages=wiki_max_pages,
+        partitions=_int_env("WIKI_PARTITIONS", _int_env("PARTITIONS", 64)) or 64,
+        log=os.environ.get("WIKI_LOG", "logs/wiki_extract.jsonl"),
+        dry_run=_bool_env("WIKI_DRY_RUN", False),
+        prefer_uncompressed=_bool_env("WIKI_PREFER_UNCOMPRESSED", True),
+        extract_text=_bool_env("WIKI_EXTRACT_TEXT", True),
+        no_text=_bool_env("WIKI_NO_TEXT", False),
+        coalesce_output=_bool_env("WIKI_COALESCE_OUTPUT", False),
+        merge_output=_bool_env("WIKI_MERGE_OUTPUT", True),
+        no_merge=_bool_env("WIKI_NO_MERGE", False),
+        max_records_per_file=_int_env("WIKI_MAX_RECORDS_PER_FILE", 2_000_000) or 2_000_000,
+        stage_dir=os.environ.get("WIKI_STAGE_DIR"),
+        force=_bool_env("WIKI_FORCE", False),
     )
-    parser.add_argument(
-        '--wiki-in',
-        required=True,
-        help='Input directory with Wikipedia dump files'
-    )
-    parser.add_argument(
-        '--out',
-        default='workspace/store/wiki',
-        help='Output directory for extracted TSV files'
-    )
-    parser.add_argument(
-        '--wiki-max-pages',
-        type=int,
-        help='Maximum number of pages to process (for development)'
-    )
-    parser.add_argument(
-        '--max-wiki-pages',
-        dest='wiki_max_pages',
-        type=int,
-        help='Alias for --wiki-max-pages'
-    )
-    parser.add_argument(
-        '--partitions',
-        type=int,
-        default=64,
-        help='Number of Spark partitions'
-    )
-    parser.add_argument(
-        '--log',
-        default='logs/wiki_extract.jsonl',
-        help='Log file path'
-    )
-    parser.add_argument(
-        '--dry-run',
-        action='store_true',
-        help='List files without processing'
-    )
-    parser.add_argument(
-        '--prefer-uncompressed',
-        action='store_true',
-        default=True,
-        help='Prefer uncompressed XML over bz2 for better partitioning'
-    )
-    parser.add_argument(
-        '--extract-text',
-        action='store_true',
-        default=True,
-        help='Extract full article text to separate files (default: True)'
-    )
-    parser.add_argument(
-        '--no-text',
-        action='store_true',
-        help='Disable full text extraction'
-    )
-    parser.add_argument(
-        '--coalesce-output',
-        action='store_true',
-        help='Write single TSV per output (slower and shuffle-heavy for big dumps). Default writes multi-part outputs.'
-    )
-    parser.add_argument(
-        '--merge-output',
-        action='store_true',
-        help='(Default behavior) Write parts in parallel then merge into single file. '
-             'This flag is kept for backwards compatibility but merge is now always enabled unless --no-merge is used.'
-    )
-    parser.add_argument(
-        '--no-merge',
-        action='store_true',
-        help='Disable merge: output will be directories with part files instead of single merged files. '
-             'Use this for very large datasets where post-merge I/O is too slow.'
-    )
-    parser.add_argument(
-        '--max-records-per-file',
-        type=int,
-        default=2_000_000,
-        help='Limit records per output part when not coalescing (helps with very large outputs).'
-    )
-    parser.add_argument(
-        '--stage-dir',
-        help='Optional staging directory inside the container (e.g., /tmp/wiki_stage). '
-             'Results will be copied to --out after completion. Useful on macOS to avoid slow bind-mount writes.'
-    )
-    parser.add_argument(
-        '--force',
-        action='store_true',
-        help='Force overwrite by cleaning output directory before running.'
-    )
-    return parser.parse_args()
 
 
 def find_wiki_dumps(input_dir: Path, prefer_uncompressed: bool = True) -> List[Path]:
@@ -450,7 +393,7 @@ def write_text_files_partition(
 
 def main() -> int:
     """Main entry point."""
-    args = parse_args()
+    args = _load_env_args()
     start_time = time.time()
 
     logging.basicConfig(
@@ -519,11 +462,10 @@ def main() -> int:
     # Default: merge (write parts in parallel, then merge into single files)
     # This is the recommended approach per Spark docs - avoids coalesce(1) bottleneck
     # User can disable with --no-merge to get directory with part files
-    if args.no_merge:
-        use_merge = False
+    use_merge = args.merge_output and not args.no_merge
+    if not use_merge:
         logger.info("Output mode: PARTITIONED (directory with part files)")
     else:
-        use_merge = True
         logger.info("Output mode: MERGE (write parts in parallel, then merge into single files)")
         logger.info("Reference: https://spark.apache.org/docs/latest/sql-data-sources-csv.html")
 
