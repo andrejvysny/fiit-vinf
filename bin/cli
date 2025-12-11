@@ -285,10 +285,10 @@ EOF
         export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-4g}"
         export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-2g}"
     else
-        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-8g}"
-        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-4g}"
+        export SPARK_DRIVER_MEMORY="${SPARK_DRIVER_MEMORY:-12g}"
+        export SPARK_EXECUTOR_MEMORY="${SPARK_EXECUTOR_MEMORY:-6g}"
     fi
-    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-2g}"
+    export SPARK_MAX_RESULT_SIZE="${SPARK_MAX_RESULT_SIZE:-4g}"
 
     print_header "Spark Wikipedia Extraction"
     echo "Driver Memory: ${SPARK_DRIVER_MEMORY}"

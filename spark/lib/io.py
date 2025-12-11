@@ -27,22 +27,56 @@ def _move_single_part(tmp_dir: Path, target_path: Path) -> None:
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def write_tsv(df: DataFrame, path: Path, columns: Sequence[str], *, header: bool = False) -> None:
-    """Write dataframe rows into a single UTF-8 TSV file."""
-    tmp_dir = Path(str(path) + ".tmpdir")
-    if tmp_dir.exists():
-        shutil.rmtree(tmp_dir)
-    (
+def _prepare_output_dir(path: Path) -> None:
+    """Remove any previous output at ``path`` so Spark can write a directory there."""
+    if path.exists():
+        if path.is_file():
+            path.unlink()
+        else:
+            shutil.rmtree(path)
+
+
+def write_tsv(
+    df: DataFrame,
+    path: Path,
+    columns: Sequence[str],
+    *,
+    header: bool = False,
+    single_file: bool = True,
+    max_records_per_file: Optional[int] = None
+) -> None:
+    """
+    Write dataframe rows into TSV files.
+
+    single_file=True mirrors the old behaviour (coalesce to one part file) which is
+    convenient for small samples. For big outputs, single_file=False avoids an
+    expensive shuffle and relies on Spark's partitioned write. max_records_per_file
+    further limits part sizes for very large datasets.
+    """
+    writer = (
         df.select(*columns)
-        .coalesce(1)
         .write.mode("overwrite")
         .option("sep", "\t")
         .option("quote", "\u0000")
         .option("header", "true" if header else "false")
         .option("encoding", "UTF-8")
-        .csv(str(tmp_dir))
     )
-    _move_single_part(tmp_dir, path)
+
+    if max_records_per_file:
+        writer = writer.option("maxRecordsPerFile", max_records_per_file)
+
+    if single_file:
+        tmp_dir = Path(str(path) + ".tmpdir")
+        if tmp_dir.exists():
+            shutil.rmtree(tmp_dir)
+        writer.coalesce(1).csv(str(tmp_dir))
+        _move_single_part(tmp_dir, path)
+        return
+
+    target_dir = Path(str(path))
+    _prepare_output_dir(target_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    writer.csv(str(target_dir))
 
 
 def write_ndjson(df: DataFrame, path: Path, columns: Optional[Sequence[str]] = None) -> None:

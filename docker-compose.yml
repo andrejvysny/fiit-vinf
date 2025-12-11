@@ -34,7 +34,7 @@ services:
   # HTML Extraction: Crawled GitHub pages → text + entities
   # --------------------------------------------------------------------------
   spark-extract:
-    image: apache/spark-py:latest
+    image: apache/spark-py:v3.4.0
     container_name: vinf-spark-extract
     platform: linux/amd64
     working_dir: /opt/app
@@ -92,7 +92,7 @@ services:
   # Wikipedia Extraction: Wiki XML dump → structured TSV + text files
   # --------------------------------------------------------------------------
   spark-wiki:
-    image: apache/spark-py:latest
+    image: apache/spark-py:v3.4.0
     container_name: vinf-spark-wiki
     platform: linux/amd64
     working_dir: /opt/app
@@ -156,7 +156,7 @@ services:
   # Entity-Wiki Join: Match extracted entities with Wikipedia pages
   # --------------------------------------------------------------------------
   spark-join:
-    image: apache/spark-py:latest
+    image: apache/spark-py:v3.4.0
     container_name: vinf-spark-join
     platform: linux/amd64
     working_dir: /opt/app

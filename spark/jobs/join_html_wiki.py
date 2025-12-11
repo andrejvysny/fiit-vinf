@@ -21,6 +21,8 @@ import logging
 import os
 import sys
 import time
+import re
+from urllib.parse import urlparse
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -80,6 +82,17 @@ def parse_args() -> argparse.Namespace:
         '--dry-run',
         action='store_true',
         help='Preview without writing outputs'
+    )
+    parser.add_argument(
+        '--coalesce-output',
+        action='store_true',
+        help='Write single TSV per output (shuffle-heavy). Default writes partitioned outputs.'
+    )
+    parser.add_argument(
+        '--max-records-per-file',
+        type=int,
+        default=2_000_000,
+        help='Limit records per output part when not coalescing.'
     )
     return parser.parse_args()
 
@@ -189,8 +202,6 @@ def get_supported_entity_types() -> List[str]:
         'LICENSE',        # Software licenses
         'TOPICS',         # GitHub topics
         'README',         # Keywords from README
-        'STAR_COUNT',     # For filtering (not joining)
-        'FORK_COUNT',     # For filtering (not joining)
         'URL',            # Could be used for external links
     ]
 
@@ -203,6 +214,48 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
     if not value:
         return ""
 
+    # License shorthands to canonical labels before normalization
+    license_map = {
+        "mit": "MIT License",
+        "mit license": "MIT License",
+        "apache-2.0": "Apache License 2.0",
+        "apache 2.0": "Apache License 2.0",
+        "apache 2": "Apache License 2.0",
+        "apache license 2": "Apache License 2.0",
+        "gpl-3.0": "GNU General Public License",
+        "gpl 3": "GNU General Public License",
+        "gpl-2.0": "GNU General Public License",
+        "gpl 2": "GNU General Public License",
+        "lgpl-3.0": "GNU Lesser General Public License",
+        "lgpl 3": "GNU Lesser General Public License",
+        "bsd-3-clause": "BSD 3 Clause License",
+        "bsd 3 clause": "BSD 3 Clause License",
+        "bsd-2-clause": "BSD 2 Clause License",
+        "bsd 2 clause": "BSD 2 Clause License",
+        "mpl-2.0": "Mozilla Public License 2.0",
+        "mpl 2.0": "Mozilla Public License 2.0",
+        "unlicense": "Unlicense",
+    }
+
+    # Language shorthands
+    lang_map = {
+        "js": "JavaScript",
+        "ts": "TypeScript",
+        "py": "Python",
+        "py3": "Python",
+        "c#": "C Sharp",
+        "csharp": "C Sharp",
+        "c++": "C++",
+        "cpp": "C++",
+        "c/c++": "C++",
+        "objc": "Objective-C",
+        "objective-c": "Objective-C",
+        "golang": "Go",
+        "vue.js": "Vue.js",
+        "nodejs": "Node.js",
+        "node": "Node.js",
+    }
+
     # For topics, they might be comma-separated
     if entity_type == 'TOPICS':
         # Split and normalize each topic
@@ -210,6 +263,29 @@ def normalize_entity_value(value: str, entity_type: str) -> str:
         # Return the first topic for now (we could explode these later)
         if topics:
             value = topics[0].strip()
+
+    if entity_type == 'URL':
+        parsed = urlparse(value)
+        segments = [seg for seg in parsed.path.split('/') if seg]
+        # Prefer the last meaningful segment
+        if segments:
+            candidate = segments[-1]
+            candidate = re.sub(r'\.(git|html|htm)$', '', candidate, flags=re.IGNORECASE)
+        else:
+            candidate = parsed.netloc or value
+        # Replace delimiters with spaces before normalization
+        candidate = re.sub(r'[-_]+', ' ', candidate)
+        return normalize_title(candidate)
+
+    if entity_type == 'LICENSE':
+        lowered = value.strip().lower()
+        mapped = license_map.get(lowered, value)
+        return normalize_title(mapped)
+
+    if entity_type == 'LANG_STATS':
+        lowered = value.strip().lower()
+        mapped = lang_map.get(lowered, value)
+        return normalize_title(mapped)
 
     # Apply standard normalization (same as Wikipedia titles)
     return normalize_title(value)
@@ -260,7 +336,7 @@ def join_entities_with_wiki(
     canonical_df: DataFrame,
     categories_df: Optional[DataFrame] = None,
     abstracts_df: Optional[DataFrame] = None
-) -> DataFrame:
+) -> (DataFrame, Dict[str, int]):
     """
     Join entities with Wikipedia canonical data.
 
@@ -296,6 +372,15 @@ def join_entities_with_wiki(
     ).withColumn(
         "norm_value", normalize_udf(F.trim(F.col("entity_value")), F.col("entity_type"))
     )
+
+    # Basic diagnostics on empty normalization to avoid counting unmatchable entities
+    norm_stats = entities_exploded.agg(
+        F.count("*").alias("total_entities"),
+        F.sum(F.when(F.col("norm_value") == "", 1).otherwise(0)).alias("empty_norm_values")
+    ).collect()[0]
+
+    # Drop rows that normalize to empty strings to avoid counting unmatchable entities
+    entities_exploded = entities_exploded.filter(F.col("norm_value") != "")
 
     # Join with canonical mapping
     joined_df = entities_exploded.alias("e").join(
@@ -403,7 +488,13 @@ def join_entities_with_wiki(
         "confidence"
     )
 
-    return final_df
+    norm_stats_dict = {
+        "entities_seen": int(norm_stats["total_entities"]),
+        "empty_norm_values": int(norm_stats["empty_norm_values"]),
+        "entities_used": int(norm_stats["total_entities"] - norm_stats["empty_norm_values"]),
+    }
+
+    return final_df, norm_stats_dict
 
 
 def generate_statistics(joined_df: DataFrame, logger) -> Dict:
@@ -534,12 +625,14 @@ def main() -> int:
 
         # Perform join with categories and abstracts
         logger.info("Joining entities with Wikipedia...")
-        joined_df = join_entities_with_wiki(
+        joined_df, norm_stats = join_entities_with_wiki(
             entities_df,
             canonical_df,
             wiki_data.get('categories'),
             wiki_data.get('abstracts')
         )
+        logger.info(f"Entity normalization stats: {norm_stats}")
+        struct_logger.log("normalization", **norm_stats)
 
         # Persist joined_df to DISK_ONLY for reuse (writing + stats)
         # This avoids recomputing the join multiple times
@@ -562,7 +655,9 @@ def main() -> int:
                 ["doc_id", "entity_type", "entity_value", "norm_value",
                  "wiki_page_id", "wiki_title", "wiki_abstract", "wiki_categories",
                  "join_key", "confidence"],
-                header=True
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
             )
             logger.info(f"Wrote join results to {output_path}")
 
@@ -584,7 +679,9 @@ def main() -> int:
                 doc_agg, agg_path,
                 ["doc_id", "joined_page_ids", "num_joined_pages",
                  "num_topics_joined", "num_licenses_joined", "num_langs_joined"],
-                header=True
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
             )
             logger.info(f"Wrote document aggregates to {agg_path}")
 
@@ -609,6 +706,10 @@ def main() -> int:
             "spark_config": {
                 "driver_memory": os.environ.get('SPARK_DRIVER_MEMORY', '6g'),
                 "partitions": args.partitions,
+            },
+            "features": {
+                "single_file_output": args.coalesce_output,
+                "max_records_per_file": args.max_records_per_file
             }
         }
 
@@ -621,7 +722,9 @@ def main() -> int:
         pipeline_stats = PipelineStats("join")
         pipeline_stats.set_config(
             partitions=args.partitions,
-            entities_max_rows=args.entities_max_rows
+            entities_max_rows=args.entities_max_rows,
+            single_file_output=args.coalesce_output,
+            max_records_per_file=args.max_records_per_file
         )
         pipeline_stats.set_inputs(
             entities_file=str(entities_path),

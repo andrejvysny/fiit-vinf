@@ -101,7 +101,14 @@ def normalize_title(title: str) -> str:
     title = re.sub(r'[^\w\s]+', ' ', title)
     title = re.sub(r'\s+', ' ', title)
 
-    return title.strip()
+    title = title.strip()
+
+    # Normalize short-form licenses (MIT -> MIT License)
+    tokens = title.split()
+    if len(tokens) == 2 and tokens[1] == "license" and len(tokens[0]) <= 5:
+        title = tokens[0]
+
+    return title
 
 
 def extract_categories(text: str) -> List[str]:

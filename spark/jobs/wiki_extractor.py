@@ -23,6 +23,7 @@ import logging
 import os
 import sys
 import time
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator, List, Optional, Tuple
@@ -51,6 +52,7 @@ from spark.lib.wiki_regexes import (
 from spark.lib.io import write_tsv, write_ndjson
 from spark.lib.stats import PipelineStats, save_pipeline_summary
 from spark.lib.utils import StructuredLogger, write_manifest, sha1_hexdigest
+from spark.lib.progress import SparkProgressReporter, JobGroup
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,6 +119,17 @@ def parse_args() -> argparse.Namespace:
         '--force-spark',
         action='store_true',
         help='Force using Spark even for small samples (not recommended for < 50k pages)'
+    )
+    parser.add_argument(
+        '--coalesce-output',
+        action='store_true',
+        help='Write single TSV per output (slower and shuffle-heavy for big dumps). Default writes multi-part outputs.'
+    )
+    parser.add_argument(
+        '--max-records-per-file',
+        type=int,
+        default=2_000_000,
+        help='Limit records per output part when not coalescing (helps with very large outputs).'
     )
     return parser.parse_args()
 
@@ -330,6 +343,13 @@ def process_pages_native(
 
     # Write TSV files using pandas
     def write_tsv_pandas(data: List[dict], path: Path, columns: List[str]):
+        # If a previous Spark run produced a directory here (multi-part), clean it
+        if path.exists():
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+
         df = pd.DataFrame(data)
         if df.empty:
             # Create empty file with headers
@@ -500,17 +520,31 @@ def read_dump_as_dataframe(
     # Read using DataFrame API instead of RDD
     if dump_path.suffix == '.bz2':
         logging.warning("Processing compressed file - this may be slower")
-        lines_df = spark.read.text(str(dump_path))
-    else:
-        lines_df = spark.read.text(str(dump_path))
 
-    # Repartition for parallel processing
-    lines_df = lines_df.repartition(partitions)
+    lines_df = spark.read.text(str(dump_path))
+
+    initial_partitions = lines_df.rdd.getNumPartitions()
+    target_partitions = partitions
+
+    if max_pages and max_pages <= 10000:
+        # For small samples, avoid excessive task counts
+        target_partitions = min(partitions, initial_partitions)
+        if target_partitions < initial_partitions:
+            logging.info(f"Coalescing partitions for small sample: {initial_partitions} -> {target_partitions}")
+            lines_df = lines_df.coalesce(target_partitions)
+    else:
+        # For big runs, avoid shrinking the natural split count (keeps partition size manageable)
+        target_partitions = max(partitions, initial_partitions)
+        if target_partitions > initial_partitions:
+            logging.info(f"Repartitioning for parallelism: {initial_partitions} -> {target_partitions}")
+            lines_df = lines_df.repartition(target_partitions)
+        else:
+            logging.info(f"Keeping reader partitions: {initial_partitions}")
 
     # Calculate max pages per partition if limit is set
     max_pages_per_partition = None
     if max_pages:
-        max_pages_per_partition = max(1, max_pages // partitions + 1)
+        max_pages_per_partition = max(1, max_pages // target_partitions + 1)
 
     # Define schema for page extraction output
     page_schema = StructType([
@@ -675,6 +709,8 @@ def write_text_files_pandas(
                     try:
                         file_path.write_text(content, encoding='utf-8')
                         written += 1
+                        if written % 500 == 0:
+                            log.info(f"Partition wrote {written} text files so far...")
                     except Exception as e:
                         log.warning(f"Failed to write {sha256}.txt: {e}")
 
@@ -779,7 +815,9 @@ def main() -> int:
                 },
                 "stats": stats,
                 "features": {
-                    "text_extraction": extract_text
+                    "text_extraction": extract_text,
+                    "single_file_output": True,
+                    "max_records_per_file": args.max_records_per_file
                 }
             }
 
@@ -846,6 +884,9 @@ def main() -> int:
     logger.info("Using Spark DataFrame API for extraction")
 
     # Create Spark session with DataFrame-optimized configuration
+    # For large dumps, avoid false executor loss by lengthening heartbeat/network timeouts.
+    heartbeat_interval = os.environ.get("SPARK_EXECUTOR_HEARTBEAT_INTERVAL", "30s")
+    network_timeout = os.environ.get("SPARK_NETWORK_TIMEOUT", "600s")
     spark_builder = SparkSession.builder \
         .appName("WikiExtractor-DataFrame") \
         .master("local[*]") \
@@ -856,7 +897,9 @@ def main() -> int:
         .config("spark.driver.maxResultSize", "4g") \
         .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
         .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
-        .config("spark.sql.shuffle.partitions", str(args.partitions))
+        .config("spark.sql.shuffle.partitions", str(args.partitions)) \
+        .config("spark.executor.heartbeatInterval", heartbeat_interval) \
+        .config("spark.network.timeout", network_timeout)
 
     file_size_gb = dump_file.stat().st_size / 1e9
     if file_size_gb > 50:
@@ -867,6 +910,9 @@ def main() -> int:
 
     spark = spark_builder.getOrCreate()
     spark.sparkContext.setLogLevel("WARN")
+    progress = SparkProgressReporter(spark, logger, interval=45.0)
+    logger.info("Starting Spark progress reporter (45s heartbeat) for long-running stages...")
+    progress.start("wiki-extraction")
 
     try:
         # Adjust partitions for small sample sizes to improve performance
@@ -881,13 +927,13 @@ def main() -> int:
             spark, dump_file, args.wiki_max_pages, effective_partitions
         )
 
-        # Use MEMORY_AND_DISK_SER persistence to avoid OOM errors
-        # This spills to disk when memory is full, using serialization to reduce GC pressure
+        # Use MEMORY_AND_DISK persistence to avoid OOM errors
+        # This spills to disk when memory is full
         # Reference: https://spark.apache.org/docs/latest/tuning.html
         if args.wiki_max_pages:
-            logger.info(f"Persisting up to {args.wiki_max_pages} pages with MEMORY_AND_DISK_SER...")
+            logger.info(f"Persisting up to {args.wiki_max_pages} pages with MEMORY_AND_DISK...")
             logger.info("This allows spilling to disk when memory is full (OOM-safe)")
-            pages_df = pages_df.persist(StorageLevel.MEMORY_AND_DISK_SER)
+            pages_df = pages_df.persist(StorageLevel.MEMORY_AND_DISK)
             # Note: We don't call count() here to avoid forcing full materialization
             # The data will be materialized lazily during processing
 
@@ -911,46 +957,106 @@ def main() -> int:
         pages_meta_df = pages_meta_df.persist(StorageLevel.DISK_ONLY)
 
         pages_path = output_dir / "pages.tsv"
-        write_tsv(pages_meta_df, pages_path,
-                  ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
-                  header=True)
+        logger.info(
+            f"Writing pages.tsv with {pages_meta_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write pages.tsv"):
+            write_tsv(
+                pages_meta_df,
+                pages_path,
+                ["page_id", "title", "norm_title", "ns", "redirect_to", "timestamp"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         # Get count after write (data already on disk, safe to count)
         pages_count = pages_meta_df.count()
         logger.info(f"Wrote {pages_count} pages to {pages_path}")
 
         # Categories
         categories_path = output_dir / "categories.tsv"
-        write_tsv(categories_df, categories_path,
-                  ["page_id", "category", "norm_category"],
-                  header=True)
+        logger.info(
+            f"Writing categories.tsv with {categories_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write categories.tsv"):
+            write_tsv(
+                categories_df,
+                categories_path,
+                ["page_id", "category", "norm_category"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         logger.info(f"Wrote categories to {categories_path}")
 
         # Links
         links_path = output_dir / "links.tsv"
-        write_tsv(links_df, links_path,
-                  ["page_id", "link_title", "norm_link_title"],
-                  header=True)
+        logger.info(
+            f"Writing links.tsv with {links_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write links.tsv"):
+            write_tsv(
+                links_df,
+                links_path,
+                ["page_id", "link_title", "norm_link_title"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         logger.info(f"Wrote links to {links_path}")
 
         # Infobox
         infobox_path = output_dir / "infobox.tsv"
-        write_tsv(infobox_df, infobox_path,
-                  ["page_id", "key", "value"],
-                  header=True)
+        logger.info(
+            f"Writing infobox.tsv with {infobox_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write infobox.tsv"):
+            write_tsv(
+                infobox_df,
+                infobox_path,
+                ["page_id", "key", "value"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         logger.info(f"Wrote infobox to {infobox_path}")
 
         # Abstracts
         abstracts_path = output_dir / "abstract.tsv"
-        write_tsv(abstracts_df, abstracts_path,
-                  ["page_id", "abstract_text"],
-                  header=True)
+        logger.info(
+            f"Writing abstract.tsv with {abstracts_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write abstract.tsv"):
+            write_tsv(
+                abstracts_df,
+                abstracts_path,
+                ["page_id", "abstract_text"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         logger.info(f"Wrote abstracts to {abstracts_path}")
 
         # Aliases
         aliases_path = output_dir / "aliases.tsv"
-        write_tsv(aliases_df, aliases_path,
-                  ["alias_norm_title", "canonical_norm_title"],
-                  header=True)
+        logger.info(
+            f"Writing aliases.tsv with {aliases_df.rdd.getNumPartitions()} partitions "
+            f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
+        )
+        with JobGroup(spark, "Write aliases.tsv"):
+            write_tsv(
+                aliases_df,
+                aliases_path,
+                ["alias_norm_title", "canonical_norm_title"],
+                header=True,
+                single_file=args.coalesce_output,
+                max_records_per_file=args.max_records_per_file
+            )
         logger.info(f"Wrote aliases to {aliases_path}")
 
         # Full text extraction (if enabled)
@@ -967,12 +1073,20 @@ def main() -> int:
             # Use DISK_ONLY persistence for text data (large, used multiple times)
             # This avoids OOM by spilling to disk instead of holding in memory
             text_metadata_df = text_metadata_df.persist(StorageLevel.DISK_ONLY)
+            logger.info(
+                f"Text metadata partitions: {text_metadata_df.rdd.getNumPartitions()} "
+                f"(single_file={args.coalesce_output})"
+            )
 
             # Deduplicate by SHA256 - also persist to disk
             unique_texts_df = text_metadata_df.groupBy("content_sha256").agg(
                 F.first("plain_text").alias("text_content"),
                 F.first("content_length").alias("length")
             ).persist(StorageLevel.DISK_ONLY)
+            logger.info(
+                f"Unique text dataframe partitions after grouping: "
+                f"{unique_texts_df.rdd.getNumPartitions()}"
+            )
 
             # Define schema for text file writing output
             write_schema = StructType([
@@ -986,7 +1100,8 @@ def main() -> int:
                 return write_text_files_pandas(iterator, text_dir_str)
 
             # Write using mapInPandas instead of RDD mapPartitions
-            write_stats_df = unique_texts_df.mapInPandas(write_partition, schema=write_schema)
+            with JobGroup(spark, "Write full text contents"):
+                write_stats_df = unique_texts_df.mapInPandas(write_partition, schema=write_schema)
 
             # Collect stats (small data only - just partition counts)
             write_stats = write_stats_df.agg(F.sum("files_written")).collect()
@@ -996,12 +1111,19 @@ def main() -> int:
 
             # Write metadata TSV
             text_metadata_path = output_dir / "wiki_text_metadata.tsv"
-            write_tsv(
-                text_metadata_df.select("page_id", "title", "content_sha256", "content_length", "timestamp"),
-                text_metadata_path,
-                ["page_id", "title", "content_sha256", "content_length", "timestamp"],
-                header=True
+            logger.info(
+                f"Writing wiki_text_metadata.tsv with {text_metadata_df.rdd.getNumPartitions()} partitions "
+                f"(single_file={args.coalesce_output}, max_records_per_file={args.max_records_per_file})"
             )
+            with JobGroup(spark, "Write text metadata"):
+                write_tsv(
+                    text_metadata_df.select("page_id", "title", "content_sha256", "content_length", "timestamp"),
+                    text_metadata_path,
+                    ["page_id", "title", "content_sha256", "content_length", "timestamp"],
+                    header=True,
+                    single_file=args.coalesce_output,
+                    max_records_per_file=args.max_records_per_file
+                )
 
             # Get counts AFTER writing (data is on disk now, safe to count)
             total_text_count = text_metadata_df.count()
@@ -1046,7 +1168,9 @@ def main() -> int:
                 "partitions": args.partitions,
             },
             "features": {
-                "text_extraction": extract_text
+                "text_extraction": extract_text,
+                "single_file_output": args.coalesce_output,
+                "max_records_per_file": args.max_records_per_file
             }
         }
 
@@ -1086,6 +1210,7 @@ def main() -> int:
         struct_logger.log("error", message=str(e))
         raise
     finally:
+        progress.stop()
         spark.stop()
         struct_logger.close()
 

@@ -26,3 +26,40 @@
 {"ts": 1764372342.4885087, "event": "error", "message": "An error occurred while calling o157.count"}
 {"ts": 1764372455.0685787, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
 {"ts": 1764372501.123203, "event": "complete", "duration": 46.05126452445984, "stats": {"pages": 9913, "categories": 66318, "links": 1780735, "infobox": 53440, "abstracts": 6308, "aliases": 2446, "text_files_written": 7135, "text_pages": 7467, "unique_texts": 7467}, "mode": "native"}
+{"ts": 1765415699.6075375, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100000}
+{"ts": 1765415703.2327075, "event": "error", "message": "type object 'StorageLevel' has no attribute 'MEMORY_AND_DISK_SER'"}
+{"ts": 1765415952.1914225, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100000}
+{"ts": 1765418971.6989596, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1765418976.3627145, "event": "error", "message": "PyArrow >= 1.0.0 must be installed; however, it was not found."}
+{"ts": 1765419006.48792, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1765419010.4165065, "event": "error", "message": "PyArrow >= 1.0.0 must be installed; however, it was not found."}
+{"ts": 1765419089.2922823, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1765419132.9775357, "event": "complete", "duration": 43.68377327919006, "stats": {"pages": 7643, "outputs_written": 8, "files_processed": 1, "text_files_written": 2699, "text_pages": 3125, "unique_texts": 3118}}
+{"ts": 1765421479.282424, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765440490.6541646, "event": "error", "message": "An error occurred while calling o371.csv"}
+{"ts": 1765440559.9023573, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765440802.4669657, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765440869.5744941, "event": "complete", "duration": 67.09154772758484, "stats": {"pages": 0, "outputs_written": 8, "files_processed": 1, "text_files_written": 0, "text_pages": 0, "unique_texts": 0}}
+{"ts": 1765440934.544836, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10}
+{"ts": 1765440952.7879863, "event": "complete", "duration": 18.240902185440063, "stats": {"pages": 3, "outputs_written": 8, "files_processed": 1, "text_files_written": 2, "text_pages": 2, "unique_texts": 2}}
+{"ts": 1765441462.1911814, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 1000}
+{"ts": 1765441466.3542564, "event": "error", "message": "[Errno 21] Is a directory: '/opt/app/workspace/store/wiki/pages.tsv'", "mode": "native"}
+{"ts": 1765441717.0504365, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10}
+{"ts": 1765441733.8941178, "event": "complete", "duration": 16.843124866485596, "stats": {"pages": 6, "outputs_written": 8, "files_processed": 1, "text_files_written": 0, "text_pages": 4, "unique_texts": 4}}
+{"ts": 1765441789.750638, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765441929.8162634, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 1000}
+{"ts": 1765441964.7719734, "event": "complete", "duration": 34.95469617843628, "stats": {"pages": 777, "outputs_written": 8, "files_processed": 1, "text_files_written": 0, "text_pages": 288, "unique_texts": 288}}
+{"ts": 1765442144.6289654, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 10000}
+{"ts": 1765442193.883755, "event": "complete", "duration": 49.253793239593506, "stats": {"pages": 7643, "outputs_written": 8, "files_processed": 1, "text_files_written": 0, "text_pages": 3125, "unique_texts": 3118}}
+{"ts": 1765442297.3976243, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100000}
+{"ts": 1765442494.138953, "event": "complete", "duration": 196.73901796340942, "stats": {"pages": 77705, "outputs_written": 8, "files_processed": 1, "text_files_written": 31229, "text_pages": 32101, "unique_texts": 32076}}
+{"ts": 1765442924.1765501, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765443338.0011952, "event": "error", "message": "An error occurred while calling o374.csv"}
+{"ts": 1765443555.849055, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765444272.846174, "event": "error", "message": "An error occurred while calling o374.csv"}
+{"ts": 1765444374.0005136, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 100000}
+{"ts": 1765444606.2428935, "event": "error", "message": "An error occurred while calling o505.collectToPython"}
+{"ts": 1765444716.1617935, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": 1000000}
+{"ts": 1765444895.916901, "event": "error", "message": "An error occurred while calling o381.csv"}
+{"ts": 1765444983.9104686, "event": "start", "wiki_in": "/opt/app/wiki_dump", "out": "/opt/app/workspace/store/wiki", "max_pages": null}
+{"ts": 1765445724.3806133, "event": "error", "message": "An error occurred while calling o378.csv"}

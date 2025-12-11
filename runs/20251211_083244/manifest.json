@@ -1,0 +1,35 @@
+{
+  "timestamp": "2025-12-11T08:32:44.770627",
+  "duration_seconds": 34.95,
+  "api": "DataFrame",
+  "input": "/opt/app/wiki_dump/enwiki-20250901-pages-articles-multistream.xml",
+  "input_size_gb": 111.46,
+  "max_pages": 1000,
+  "outputs": {
+    "pages": "/opt/app/workspace/store/wiki/pages.tsv",
+    "categories": "/opt/app/workspace/store/wiki/categories.tsv",
+    "links": "/opt/app/workspace/store/wiki/links.tsv",
+    "infobox": "/opt/app/workspace/store/wiki/infobox.tsv",
+    "abstracts": "/opt/app/workspace/store/wiki/abstract.tsv",
+    "aliases": "/opt/app/workspace/store/wiki/aliases.tsv",
+    "text_metadata": "/opt/app/workspace/store/wiki/wiki_text_metadata.tsv",
+    "text_directory": "/opt/app/workspace/store/wiki/text"
+  },
+  "stats": {
+    "pages": 777,
+    "outputs_written": 8,
+    "files_processed": 1,
+    "text_files_written": 0,
+    "text_pages": 288,
+    "unique_texts": 288
+  },
+  "spark_config": {
+    "driver_memory": "4g",
+    "partitions": 256
+  },
+  "features": {
+    "text_extraction": true,
+    "single_file_output": false,
+    "max_records_per_file": 2000000
+  }
+}

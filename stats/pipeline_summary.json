@@ -1,19 +1,19 @@
 {
-  "generated_at": "2025-11-28T23:39:15.685414",
+  "generated_at": "2025-12-11T08:47:31.482177",
   "stages": {
     "wiki_extraction": {
-      "status": "completed",
-      "duration_seconds": 46.05,
-      "run_id": "20251128_232735",
-      "start_time": "2025-11-28T23:27:35.071675",
-      "end_time": "2025-11-28T23:28:21.123599",
-      "pages_processed": 9913,
-      "categories": 66318,
-      "links": 1780735,
-      "infobox_fields": 53440,
-      "abstracts": 6308,
-      "aliases": 2446,
-      "text_files": 7135
+      "status": "error",
+      "duration_seconds": 4.16,
+      "run_id": "20251211_082422",
+      "start_time": "2025-12-11T08:24:22.193831",
+      "end_time": "2025-12-11T08:24:26.354368",
+      "pages_processed": 0,
+      "categories": 0,
+      "links": 0,
+      "infobox_fields": 0,
+      "abstracts": 0,
+      "aliases": 0,
+      "text_files": 0
     },
     "html_extraction": {
       "status": "completed",
@@ -36,13 +36,13 @@
     "join": {
       "status": "completed",
       "duration_seconds": 0.0,
-      "run_id": "20251128_233915",
-      "start_time": "2025-11-28T23:39:15.681750",
-      "end_time": "2025-11-28T23:39:15.681795",
+      "run_id": "20251211_084731",
+      "start_time": "2025-12-11T08:47:31.478385",
+      "end_time": "2025-12-11T08:47:31.478457",
       "total_entities": 12454,
-      "matched_entities": 129,
-      "match_rate": 1.04,
-      "unique_wiki_pages": 51,
+      "matched_entities": 111,
+      "match_rate": 0.89,
+      "unique_wiki_pages": 25,
       "unique_docs_matched": 30
     },
     "lucene_index": {
@@ -79,12 +79,12 @@
     }
   },
   "totals": {
-    "total_duration_seconds": 49.17999999999999,
+    "total_duration_seconds": 7.29,
     "total_entities_extracted": 10130,
-    "total_wiki_pages": 9913,
+    "total_wiki_pages": 0,
     "total_html_files": 30,
-    "total_joins": 129,
-    "overall_status": "completed",
+    "total_joins": 111,
+    "overall_status": "error",
     "total_docs_indexed": 28353
   }
 }
