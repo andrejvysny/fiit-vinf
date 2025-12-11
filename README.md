@@ -14,9 +14,18 @@ bin/cli pipeline
 
 ## Requirements
 
-- Docker
+- Docker & Docker Compose
+- Python 3.9+ (for local development)
 - Wikipedia XML dump in `wiki_dump/` (for wiki extraction)
 - Crawled HTML files in `workspace/store/html/` (for extraction)
+
+## Setup
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
 ## Pipeline Overview
 
@@ -235,7 +244,17 @@ bin/cli lucene-compare
 
 ---
 
-### 7. Full Pipeline
+### 7. Pipeline Statistics
+
+Show statistics about pipeline artifacts.
+
+```bash
+bin/cli stats
+```
+
+---
+
+### 8. Full Pipeline
 
 Run all stages automatically.
 
@@ -398,3 +417,41 @@ SPARK_DRIVER_MEMORY=12g bin/cli wiki
 bin/cli join
 bin/cli lucene-build
 ```
+
+---
+
+## Crawling
+
+Run the GitHub crawler (requires config.yml):
+
+```bash
+python -m crawler --config config.yml
+```
+
+---
+
+## Project Structure
+
+```
+bin/cli                 # Unified CLI (main entry point)
+crawler/                # GitHub HTML crawler
+extractor/              # HTML to text + entity extraction
+indexer/                # TF-IDF indexing
+lucene_indexer/         # PyLucene full-text search
+spark/jobs/             # Spark processing jobs
+  ├── html_extractor.py
+  ├── wiki_extractor.py
+  └── join_html_wiki.py
+spark/lib/              # Shared utilities
+tests/                  # Unit tests
+config.yml              # Configuration
+docker-compose.yml      # Docker orchestration
+```
+
+---
+
+## Documentation
+
+- `CLAUDE.md` - Developer reference for Claude Code
+- `FULL_RUN_GUIDE.md` - Complete pipeline tutorial
+- `docs/` - Additional documentation
